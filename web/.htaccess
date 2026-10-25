@@ -1,0 +1,10 @@
+DirectoryIndex index.html
+
+# ─── HTTPS redirect ───────────────────────────────────────────────────────────
+RewriteEngine On
+RewriteCond %{HTTPS} off
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+# ─── Proxy hacia Express (PM2 en puerto 3031) ────────────────────────────────
+RewriteRule ^api\.php$ http://localhost:3031/api [P,QSA,L]
+RewriteRule ^api$ http://localhost:3031/api [P,QSA,L]

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CuerPro</title>
+  <style>
+    :root { --bg: #0c0d10; --card: #16181d; --borde: #2b2f38; --texto: #f2f3f5; --suave: #a0a6b4; --acento: #ff6b35; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--texto); font: 16px/1.5 system-ui, -apple-system, sans-serif; }
+    main { max-width: 520px; margin: 0 auto; padding: 48px 16px; }
+    h1 { color: var(--acento); font-size: 44px; margin: 0; }
+    p { color: var(--suave); }
+    .card { background: var(--card); border: 1px solid var(--borde); border-radius: 16px; padding: 20px; margin-top: 16px; }
+    .card h2 { margin: 0 0 4px; font-size: 20px; }
+    a.boton { display: block; text-align: center; background: var(--acento); color: var(--bg); font-weight: 700;
+              text-decoration: none; padding: 14px; border-radius: 12px; margin-top: 12px; }
+    a.boton.secundario { background: #23262e; color: var(--texto); }
+    footer { color: #6b7180; font-size: 13px; text-align: center; margin-top: 40px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>CuerPro</h1>
+    <p>Entrená con tu grupo de amigos: rutinas por músculo, quién va y quién falta, y niveles por temporada.</p>
+
+    <div class="card">
+      <h2>Android</h2>
+      <p>Bajá el instalador y abrilo desde el celular. Si te lo pide, permití instalar apps de esta fuente.</p>
+      <!-- Reemplazar por el link al .apk que genera `eas build --profile preview --platform android` -->
+      <a class="boton" href="/descargas/cuerpro.apk">Descargar para Android</a>
+    </div>
+
+    <div class="card">
+      <h2>iPhone</h2>
+      <p>Mientras estamos en pruebas, la app se instala con TestFlight. Pedile la invitación al coach de tu grupo.</p>
+      <a class="boton secundario" href="https://apps.apple.com/app/testflight/id899247664">Instalar TestFlight</a>
+    </div>
+
+    <footer>Desarrollado por Leandro Alegre</footer>
+  </main>
+</body>
+</html>

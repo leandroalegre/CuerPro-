@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "CuerPro",
+    "slug": "cuerpro",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "cuerpro",
+    "userInterfaceStyle": "dark",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "package": "ar.sistemascloud.cuerpro",
+      "permissions": [
+        "NOTIFICATIONS",
+        "VIBRATE"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "ar.sistemascloud.cuerpro",
+      "supportsTablet": false
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-notifications",
+        {
+          "color": "#ff6b35"
+        }
+      ]
+    ],
+    "owner": "leandroalegre"
+  }
+}
