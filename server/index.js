@@ -1,0 +1,965 @@
+'use strict';
+
+const express = require('express');
+const mysql   = require('mysql2/promise');
+const cors    = require('cors');
+const crypto  = require('crypto');
+const fs      = require('fs');
+const path    = require('path');
+require('dotenv').config();
+
+const EJERCICIOS_BASE = require('./ejercicios-base');
+
+const app  = express();
+const PORT = process.env.PORT || 3031;
+
+// ─── Middlewares ──────────────────────────────────────────────────────────────
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// ─── DB Pool ──────────────────────────────────────────────────────────────────
+const pool = mysql.createPool({
+  host:              process.env.DB_HOST || 'localhost',
+  port:              Number(process.env.DB_PORT || 3306),
+  user:              process.env.DB_USER || 'sistemacbahost_cuerpro_api',
+  password:          process.env.DB_PASS || '',
+  database:          process.env.DB_NAME || 'sistemacbahost_cuerpro',
+  charset:           'utf8mb4',
+  dateStrings:       true,
+  waitForConnections: true,
+  connectionLimit:   10,
+});
+
+// ─── Init tablas ──────────────────────────────────────────────────────────────
+async function initTables() {
+  const sql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8')
+    .split('\n')
+    .filter(line => !line.trim().startsWith('--'))
+    .join('\n');
+  const statements = sql.split(';').map(s => s.trim()).filter(Boolean);
+
+  const conn = await pool.getConnection();
+  try {
+    for (const statement of statements) await conn.query(statement);
+
+    // Catálogo precargado (solo la primera vez)
+    const [[{ total }]] = await conn.query(
+      'SELECT COUNT(*) AS total FROM cuerpro_ejercicios WHERE grupo_id IS NULL'
+    );
+    if (total === 0) {
+      await conn.query(
+        `INSERT INTO cuerpro_ejercicios
+           (nombre, musculo_principal, musculos_secundarios, equipo, movimiento) VALUES ?`,
+        [EJERCICIOS_BASE]
+      );
+    }
+
+    // Limpiar sesiones vencidas
+    await conn.query(
+      'DELETE FROM cuerpro_sesiones WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+      [SESION_DIAS]
+    );
+
+    console.log('✅ Tablas OK');
+  } finally {
+    conn.release();
+  }
+}
+
+// ─── Reglas del juego ─────────────────────────────────────────────────────────
+const SESION_DIAS = 60;
+
+const PUNTOS = {
+  asistencia:      10,
+  rutina_completa: 5,
+  semana_completa: 20,
+  record:          15,
+  sin_avisos:      10,
+};
+
+// Niveles por temporada de 1 mes (puntos mínimos)
+const NIVELES = [
+  { nombre: 'Bronce',   desde: 0 },
+  { nombre: 'Plata',    desde: 100 },
+  { nombre: 'Oro',      desde: 200 },
+  { nombre: 'Platino',  desde: 300 },
+  { nombre: 'Diamante', desde: 380 },
+];
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function ok(res, data) {
+  return res.json({ ok: true, ...data });
+}
+function err(res, msg, code = 400) {
+  return res.status(code).json({ ok: false, error: msg });
+}
+function getParam(req, key) {
+  return req.body?.[key] ?? req.query?.[key];
+}
+function requireParams(req, ...keys) {
+  const values = keys.map(k => getParam(req, k));
+  const missing = keys.filter((k, i) => values[i] === undefined || values[i] === null || values[i] === '');
+  if (missing.length) throw httpError(400, `Campos requeridos: ${missing.join(', ')}`);
+  return values;
+}
+function httpError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `scrypt$${salt}$${hash}`;
+}
+function checkPassword(password, stored) {
+  const [, salt, hash] = String(stored).split('$');
+  if (!salt || !hash) return false;
+  const test = crypto.scryptSync(password, salt, 64);
+  return crypto.timingSafeEqual(test, Buffer.from(hash, 'hex'));
+}
+
+function nuevoCodigo() {
+  // Sin 0/O ni 1/I para que se pueda dictar
+  const letras = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from(crypto.randomBytes(6), b => letras[b % letras.length]).join('');
+}
+
+function temporadaActual(fecha = new Date()) {
+  return `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}`;
+}
+function temporadaAnterior() {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - 1);
+  return temporadaActual(d);
+}
+function nivelPorPuntos(puntos) {
+  let idx = 0;
+  NIVELES.forEach((n, i) => { if (puntos >= n.desde) idx = i; });
+  return idx;
+}
+
+async function sesion(req) {
+  const auth  = req.get('authorization') || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : getParam(req, 'token');
+  if (!token) throw httpError(401, 'Sesión requerida');
+  const [rows] = await pool.query(
+    `SELECT u.id, u.nombre, u.email FROM cuerpro_sesiones s
+     JOIN cuerpro_usuarios u ON u.id = s.usuario_id
+     WHERE s.token = ? AND s.created_at > DATE_SUB(NOW(), INTERVAL ? DAY)`,
+    [token, SESION_DIAS]
+  );
+  if (!rows.length) throw httpError(401, 'Sesión vencida, volvé a entrar');
+  return rows[0];
+}
+
+async function crearSesion(usuarioId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  await pool.query('INSERT INTO cuerpro_sesiones (token, usuario_id) VALUES (?, ?)', [token, usuarioId]);
+  return token;
+}
+
+// Devuelve el grupo y el rol del usuario; falla si no es miembro
+async function miembro(grupoId, usuarioId) {
+  const [rows] = await pool.query(
+    `SELECT g.*, m.rol FROM cuerpro_grupos g
+     JOIN cuerpro_miembros m ON m.grupo_id = g.id
+     WHERE g.id = ? AND m.usuario_id = ?`,
+    [grupoId, usuarioId]
+  );
+  if (!rows.length) throw httpError(403, 'No sos miembro de este grupo');
+  return rows[0];
+}
+async function coach(grupoId, usuarioId) {
+  const grupo = await miembro(grupoId, usuarioId);
+  if (grupo.rol !== 'coach') throw httpError(403, 'Solo un coach puede hacer esto');
+  return grupo;
+}
+async function puedeEditarPlan(grupoId, usuarioId) {
+  const grupo = await miembro(grupoId, usuarioId);
+  if (grupo.rol !== 'coach' && grupo.quien_edita !== 'todos')
+    throw httpError(403, 'Solo los coaches pueden editar el plan');
+  return grupo;
+}
+
+async function sumarPuntos(usuarioId, grupoId, motivo, referencia) {
+  // INSERT IGNORE + clave única: el mismo evento nunca suma dos veces
+  await pool.query(
+    `INSERT IGNORE INTO cuerpro_puntos (usuario_id, grupo_id, temporada, motivo, puntos, referencia)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [usuarioId, grupoId, temporadaActual(), motivo, PUNTOS[motivo], referencia]
+  );
+}
+async function quitarPuntos(usuarioId, motivo, referencia) {
+  await pool.query(
+    'DELETE FROM cuerpro_puntos WHERE usuario_id = ? AND motivo = ? AND referencia = ?',
+    [usuarioId, motivo, referencia]
+  );
+}
+
+// Nivel general: suma todos los grupos. Al empezar el mes bajás un nivel, no volvés a Bronce.
+async function nivelDe(usuarioId) {
+  const [rows] = await pool.query(
+    `SELECT temporada, grupo_id, SUM(puntos) AS puntos FROM cuerpro_puntos
+     WHERE usuario_id = ? AND temporada IN (?, ?)
+     GROUP BY temporada, grupo_id`,
+    [usuarioId, temporadaActual(), temporadaAnterior()]
+  );
+  const actual   = rows.filter(r => r.temporada === temporadaActual());
+  const anterior = rows.filter(r => r.temporada === temporadaAnterior());
+  const puntos   = actual.reduce((s, r) => s + Number(r.puntos), 0);
+  const puntosAnt = anterior.reduce((s, r) => s + Number(r.puntos), 0);
+  const idx = Math.max(nivelPorPuntos(puntos), nivelPorPuntos(puntosAnt) - 1, 0);
+  const siguiente = NIVELES[idx + 1];
+  return {
+    temporada: temporadaActual(),
+    puntos,
+    nivel: NIVELES[idx].nombre,
+    siguiente: siguiente ? { nombre: siguiente.nombre, faltan: Math.max(siguiente.desde - puntos, 0) } : null,
+    por_grupo: actual.map(r => ({ grupo_id: r.grupo_id, puntos: Number(r.puntos) })),
+  };
+}
+
+// Próximo encuentro según los horarios fijos del grupo; lo crea si todavía no existe
+async function proximoEncuentro(grupoId) {
+  const [horarios] = await pool.query(
+    'SELECT dia_semana, hora FROM cuerpro_horarios WHERE grupo_id = ?',
+    [grupoId]
+  );
+  if (!horarios.length) return null;
+
+  const ahora = new Date();
+  // Un encuentro sigue siendo "el próximo" hasta 2 horas después de empezar
+  const desde = new Date(ahora.getTime() - 2 * 60 * 60 * 1000);
+  let mejor = null;
+  for (const h of horarios) {
+    const [hh, mm] = String(h.hora).split(':').map(Number);
+    for (let d = 0; d <= 7; d++) {
+      const f = new Date(desde);
+      f.setDate(f.getDate() + d);
+      f.setHours(hh, mm, 0, 0);
+      if (f.getDay() === Number(h.dia_semana) && f >= desde) {
+        if (!mejor || f < mejor) mejor = f;
+        break;
+      }
+    }
+  }
+  const pad = n => String(n).padStart(2, '0');
+  const fechaHora = `${mejor.getFullYear()}-${pad(mejor.getMonth() + 1)}-${pad(mejor.getDate())} ` +
+                    `${pad(mejor.getHours())}:${pad(mejor.getMinutes())}:00`;
+
+  // Le toca el siguiente día del plan, en rotación
+  const [[plan]] = await pool.query(
+    'SELECT id FROM cuerpro_planes WHERE grupo_id = ? AND activo = 1 ORDER BY id DESC LIMIT 1',
+    [grupoId]
+  );
+  let diaId = null;
+  if (plan) {
+    const [dias] = await pool.query('SELECT id FROM cuerpro_plan_dias WHERE plan_id = ? ORDER BY orden', [plan.id]);
+    const [[{ previos }]] = await pool.query(
+      'SELECT COUNT(*) AS previos FROM cuerpro_encuentros WHERE grupo_id = ? AND fecha_hora < ?',
+      [grupoId, fechaHora]
+    );
+    if (dias.length) diaId = dias[previos % dias.length].id;
+  }
+
+  await pool.query(
+    'INSERT IGNORE INTO cuerpro_encuentros (grupo_id, fecha_hora, dia_id) VALUES (?, ?, ?)',
+    [grupoId, fechaHora, diaId]
+  );
+  const [[encuentro]] = await pool.query(
+    'SELECT * FROM cuerpro_encuentros WHERE grupo_id = ? AND fecha_hora = ?',
+    [grupoId, fechaHora]
+  );
+  return encuentro;
+}
+
+// Cuántos entrenamientos del grupo quedan en el mes después de `desde`
+async function entrenamientosQuedanEnMes(grupoId, desde) {
+  const [horarios] = await pool.query('SELECT dia_semana FROM cuerpro_horarios WHERE grupo_id = ?', [grupoId]);
+  const dias = horarios.map(h => Number(h.dia_semana));
+  const f = new Date(desde);
+  const mes = f.getMonth();
+  let total = 0;
+  for (f.setDate(f.getDate() + 1); f.getMonth() === mes; f.setDate(f.getDate() + 1)) {
+    total += dias.filter(d => d === f.getDay()).length;
+  }
+  return total;
+}
+
+// Si no vas: cuántas veces más tenés que ir este mes para llegar al próximo nivel
+async function objetivoDelMes(usuarioId, grupoId, fechaHora) {
+  const nivel = await nivelDe(usuarioId);
+  const quedan = await entrenamientosQuedanEnMes(grupoId, fechaHora.replace(' ', 'T'));
+  if (!nivel.siguiente) {
+    return { nivel: nivel.nivel, objetivo: null, necesitas: 0, quedan,
+      texto: `Ya sos ${nivel.nivel}. Quedan ${quedan} entrenamientos este mes para seguir sumando.` };
+  }
+  const necesitas = Math.ceil(nivel.siguiente.faltan / PUNTOS.asistencia);
+  const llegas = necesitas <= quedan;
+  const texto = llegas
+    ? `Para llegar a ${nivel.siguiente.nombre} tenés que ir a ${necesitas} de los ${quedan} entrenamientos que quedan este mes.`
+    : `Quedan ${quedan} entrenamientos este mes: con asistencia sola no llegás a ${nivel.siguiente.nombre}, ` +
+      `pero cada récord personal suma ${PUNTOS.record} puntos más.`;
+  return { nivel: nivel.nivel, objetivo: nivel.siguiente.nombre, necesitas, quedan, llegas, texto };
+}
+
+// Ejercicios de un día del plan, con alternativas y los cambios elegidos en el encuentro
+async function rutinaDelDia(diaId, encuentroId) {
+  const [ejercicios] = await pool.query(
+    `SELECT pe.id AS plan_ejercicio_id, pe.orden, pe.series, pe.repeticiones, pe.peso_sugerido,
+            e.id AS ejercicio_id, e.nombre, e.musculo_principal, e.equipo
+     FROM cuerpro_plan_ejercicios pe
+     JOIN cuerpro_ejercicios e ON e.id = pe.ejercicio_id
+     WHERE pe.dia_id = ? ORDER BY pe.orden`,
+    [diaId]
+  );
+  if (!ejercicios.length) return [];
+  const ids = ejercicios.map(e => e.plan_ejercicio_id);
+  const [alternativas] = await pool.query(
+    `SELECT a.plan_ejercicio_id, e.id AS ejercicio_id, e.nombre, e.equipo
+     FROM cuerpro_alternativas a JOIN cuerpro_ejercicios e ON e.id = a.ejercicio_id
+     WHERE a.plan_ejercicio_id IN (?) ORDER BY a.orden`,
+    [ids]
+  );
+  let cambios = [];
+  if (encuentroId) {
+    [cambios] = await pool.query(
+      `SELECT c.plan_ejercicio_id, e.id AS ejercicio_id, e.nombre, e.equipo, u.nombre AS elegido_por
+       FROM cuerpro_cambios_encuentro c
+       JOIN cuerpro_ejercicios e ON e.id = c.ejercicio_id
+       JOIN cuerpro_usuarios u ON u.id = c.usuario_id
+       WHERE c.encuentro_id = ?`,
+      [encuentroId]
+    );
+  }
+  return ejercicios.map(e => ({
+    ...e,
+    alternativas: alternativas.filter(a => a.plan_ejercicio_id === e.plan_ejercicio_id),
+    cambio: cambios.find(c => c.plan_ejercicio_id === e.plan_ejercicio_id) || null,
+  }));
+}
+
+function isExpoPushToken(token) {
+  return typeof token === 'string' && /^Expo(nent)?PushToken\[.+\]$/.test(token);
+}
+
+async function notificar(usuarioIds, message) {
+  if (!usuarioIds.length) return;
+  const [rows] = await pool.query(
+    'SELECT token FROM cuerpro_push_tokens WHERE usuario_id IN (?)',
+    [usuarioIds]
+  );
+  if (!rows.length) return;
+
+  const headers = {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+  };
+  if (process.env.EXPO_ACCESS_TOKEN) {
+    headers.Authorization = `Bearer ${process.env.EXPO_ACCESS_TOKEN}`;
+  }
+  const messages = rows.map(row => ({
+    to: row.token,
+    title: message.title,
+    body: message.body,
+    sound: 'default',
+    data: message.data,
+  }));
+  for (let i = 0; i < messages.length; i += 100) {
+    const chunk = messages.slice(i, i + 100);
+    try {
+      const response = await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(chunk),
+      });
+      const json = await response.json();
+      const tickets = Array.isArray(json.data) ? json.data : [];
+      for (let j = 0; j < tickets.length; j++) {
+        if (tickets[j]?.details?.error === 'DeviceNotRegistered') {
+          await pool.query('DELETE FROM cuerpro_push_tokens WHERE token = ?', [chunk[j].to]);
+        }
+      }
+    } catch (e) {
+      console.error('Push error', e.message);
+    }
+  }
+}
+
+// ─── Acciones ─────────────────────────────────────────────────────────────────
+const acciones = {
+
+  // ── Ping ──
+  async ping() {
+    return { version: '0.1.0', timestamp: new Date().toISOString() };
+  },
+
+  // ── Cuenta ──
+  async registro(req) {
+    const [nombre, email, password] = requireParams(req, 'nombre', 'email', 'password');
+    if (String(password).length < 6) throw httpError(400, 'La contraseña necesita al menos 6 caracteres');
+    const mail = String(email).trim().toLowerCase();
+    const [existe] = await pool.query('SELECT id FROM cuerpro_usuarios WHERE email = ?', [mail]);
+    if (existe.length) throw httpError(409, 'Ya hay una cuenta con ese email');
+    const [r] = await pool.query(
+      'INSERT INTO cuerpro_usuarios (nombre, email, password_hash) VALUES (?, ?, ?)',
+      [String(nombre).trim(), mail, hashPassword(String(password))]
+    );
+    return { token: await crearSesion(r.insertId), usuario: { id: r.insertId, nombre, email: mail } };
+  },
+
+  async login(req) {
+    const [email, password] = requireParams(req, 'email', 'password');
+    const [rows] = await pool.query(
+      'SELECT id, nombre, email, password_hash FROM cuerpro_usuarios WHERE email = ?',
+      [String(email).trim().toLowerCase()]
+    );
+    if (!rows.length || !checkPassword(String(password), rows[0].password_hash))
+      throw httpError(401, 'Email o contraseña incorrectos');
+    const { password_hash, ...usuario } = rows[0];
+    return { token: await crearSesion(usuario.id), usuario };
+  },
+
+  async logout(req) {
+    const auth  = req.get('authorization') || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : getParam(req, 'token');
+    await pool.query('DELETE FROM cuerpro_sesiones WHERE token = ?', [token || '']);
+    return {};
+  },
+
+  async yo(req) {
+    const usuario = await sesion(req);
+    const [grupos] = await pool.query(
+      `SELECT g.id, g.nombre, g.gym, g.codigo_invitacion, m.rol FROM cuerpro_grupos g
+       JOIN cuerpro_miembros m ON m.grupo_id = g.id WHERE m.usuario_id = ? ORDER BY g.nombre`,
+      [usuario.id]
+    );
+    return { usuario, grupos, nivel: await nivelDe(usuario.id) };
+  },
+
+  async push_token(req) {
+    const usuario = await sesion(req);
+    const [token] = requireParams(req, 'push_token');
+    if (!isExpoPushToken(token)) throw httpError(400, 'Token de notificaciones inválido');
+    await pool.query(
+      `INSERT INTO cuerpro_push_tokens (usuario_id, token) VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE usuario_id = VALUES(usuario_id)`,
+      [usuario.id, token]
+    );
+    return {};
+  },
+
+  // ── Grupos ──
+  async grupo_crear(req) {
+    const usuario = await sesion(req);
+    const [nombre] = requireParams(req, 'nombre');
+    const gym = getParam(req, 'gym') || '';
+    const quienEdita = getParam(req, 'quien_edita') === 'todos' ? 'todos' : 'algunos';
+    let codigo;
+    for (let i = 0; i < 5; i++) {
+      codigo = nuevoCodigo();
+      const [ya] = await pool.query('SELECT id FROM cuerpro_grupos WHERE codigo_invitacion = ?', [codigo]);
+      if (!ya.length) break;
+    }
+    const [r] = await pool.query(
+      'INSERT INTO cuerpro_grupos (nombre, gym, codigo_invitacion, quien_edita) VALUES (?, ?, ?, ?)',
+      [nombre, gym, codigo, quienEdita]
+    );
+    await pool.query(
+      "INSERT INTO cuerpro_miembros (grupo_id, usuario_id, rol) VALUES (?, ?, 'coach')",
+      [r.insertId, usuario.id]
+    );
+    return { grupo: { id: r.insertId, nombre, gym, codigo_invitacion: codigo, rol: 'coach' } };
+  },
+
+  async grupo_unirse(req) {
+    const usuario = await sesion(req);
+    const [codigo] = requireParams(req, 'codigo');
+    const [rows] = await pool.query(
+      'SELECT id, nombre, gym, quien_edita FROM cuerpro_grupos WHERE codigo_invitacion = ?',
+      [String(codigo).trim().toUpperCase()]
+    );
+    if (!rows.length) throw httpError(404, 'No hay ningún grupo con ese código');
+    const grupo = rows[0];
+    const rol = grupo.quien_edita === 'todos' ? 'coach' : 'miembro';
+    await pool.query(
+      'INSERT IGNORE INTO cuerpro_miembros (grupo_id, usuario_id, rol) VALUES (?, ?, ?)',
+      [grupo.id, usuario.id, rol]
+    );
+    return { grupo: { id: grupo.id, nombre: grupo.nombre, gym: grupo.gym } };
+  },
+
+  async grupo_detalle(req) {
+    const usuario = await sesion(req);
+    const [grupoId] = requireParams(req, 'grupo_id');
+    const grupo = await miembro(grupoId, usuario.id);
+    const [miembros] = await pool.query(
+      `SELECT u.id, u.nombre, m.rol FROM cuerpro_miembros m
+       JOIN cuerpro_usuarios u ON u.id = m.usuario_id WHERE m.grupo_id = ? ORDER BY u.nombre`,
+      [grupoId]
+    );
+    const [horarios] = await pool.query(
+      'SELECT id, dia_semana, TIME_FORMAT(hora, "%H:%i") AS hora FROM cuerpro_horarios WHERE grupo_id = ? ORDER BY dia_semana, hora',
+      [grupoId]
+    );
+    return { grupo, miembros, horarios };
+  },
+
+  async grupo_config(req) {
+    const usuario = await sesion(req);
+    const [grupoId] = requireParams(req, 'grupo_id');
+    await coach(grupoId, usuario.id);
+    const campos = {};
+    const quienEdita = getParam(req, 'quien_edita');
+    if (quienEdita === 'todos' || quienEdita === 'algunos') campos.quien_edita = quienEdita;
+    const dias = Number(getParam(req, 'dias_aviso_musculo'));
+    if (dias > 0) campos.dias_aviso_musculo = dias;
+    for (const k of ['ranking_grupo', 'ranking_global']) {
+      const v = getParam(req, k);
+      if (v !== undefined) campos[k] = v === true || v === '1' || v === 1 ? 1 : 0;
+    }
+    if (Object.keys(campos).length)
+      await pool.query('UPDATE cuerpro_grupos SET ? WHERE id = ?', [campos, grupoId]);
+    return {};
+  },
+
+  async miembro_rol(req) {
+    const usuario = await sesion(req);
+    const [grupoId, usuarioId, rol] = requireParams(req, 'grupo_id', 'usuario_id', 'rol');
+    await coach(grupoId, usuario.id);
+    if (rol !== 'coach' && rol !== 'miembro') throw httpError(400, 'Rol inválido');
+    await pool.query(
+      'UPDATE cuerpro_miembros SET rol = ? WHERE grupo_id = ? AND usuario_id = ?',
+      [rol, grupoId, usuarioId]
+    );
+    return {};
+  },
+
+  // horarios: [{dia_semana: 1, hora: "19:00"}, ...] — reemplaza los anteriores
+  async horarios_guardar(req) {
+    const usuario = await sesion(req);
+    const [grupoId, horarios] = requireParams(req, 'grupo_id', 'horarios');
+    await coach(grupoId, usuario.id);
+    const lista = typeof horarios === 'string' ? JSON.parse(horarios) : horarios;
+    await pool.query('DELETE FROM cuerpro_horarios WHERE grupo_id = ?', [grupoId]);
+    if (lista.length) {
+      await pool.query(
+        'INSERT INTO cuerpro_horarios (grupo_id, dia_semana, hora) VALUES ?',
+        [lista.map(h => [grupoId, Number(h.dia_semana), h.hora])]
+      );
+    }
+    return {};
+  },
+
+  // ── Ejercicios ──
+  async ejercicios(req) {
+    const usuario = await sesion(req);
+    const grupoId = getParam(req, 'grupo_id');
+    if (grupoId) await miembro(grupoId, usuario.id);
+    const [rows] = await pool.query(
+      `SELECT id, grupo_id, nombre, musculo_principal, musculos_secundarios, equipo, movimiento
+       FROM cuerpro_ejercicios WHERE grupo_id IS NULL OR grupo_id = ?
+       ORDER BY musculo_principal, nombre`,
+      [grupoId || 0]
+    );
+    return { ejercicios: rows };
+  },
+
+  async ejercicio_crear(req) {
+    const usuario = await sesion(req);
+    const [grupoId, nombre, musculo, equipo] =
+      requireParams(req, 'grupo_id', 'nombre', 'musculo_principal', 'equipo');
+    await puedeEditarPlan(grupoId, usuario.id);
+    const [r] = await pool.query(
+      `INSERT INTO cuerpro_ejercicios (grupo_id, nombre, musculo_principal, musculos_secundarios, equipo, movimiento)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [grupoId, nombre, musculo, getParam(req, 'musculos_secundarios') || '', equipo, getParam(req, 'movimiento') || '']
+    );
+    return { id: r.insertId };
+  },
+
+  // ── Planes ──
+  async plan(req) {
+    const usuario = await sesion(req);
+    const [grupoId] = requireParams(req, 'grupo_id');
+    await miembro(grupoId, usuario.id);
+    const [[plan]] = await pool.query(
+      'SELECT id, nombre FROM cuerpro_planes WHERE grupo_id = ? AND activo = 1 ORDER BY id DESC LIMIT 1',
+      [grupoId]
+    );
+    if (!plan) return { plan: null };
+    const [dias] = await pool.query(
+      'SELECT id, orden, nombre FROM cuerpro_plan_dias WHERE plan_id = ? ORDER BY orden',
+      [plan.id]
+    );
+    for (const dia of dias) dia.ejercicios = await rutinaDelDia(dia.id, null);
+    return { plan: { ...plan, dias } };
+  },
+
+  // plan: {nombre, dias: [{nombre, ejercicios: [{ejercicio_id, series, repeticiones, peso_sugerido, alternativas: [ejercicio_id]}]}]}
+  // Guarda una versión nueva y deja la anterior inactiva, así no se pierde el historial.
+  async plan_guardar(req) {
+    const usuario = await sesion(req);
+    const [grupoId, planParam] = requireParams(req, 'grupo_id', 'plan');
+    await puedeEditarPlan(grupoId, usuario.id);
+    const plan = typeof planParam === 'string' ? JSON.parse(planParam) : planParam;
+    if (!plan.dias?.length) throw httpError(400, 'El plan necesita al menos un día');
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.query('UPDATE cuerpro_planes SET activo = 0 WHERE grupo_id = ?', [grupoId]);
+      const [p] = await conn.query(
+        'INSERT INTO cuerpro_planes (grupo_id, nombre) VALUES (?, ?)',
+        [grupoId, plan.nombre || 'Plan']
+      );
+      for (const [i, dia] of plan.dias.entries()) {
+        const [d] = await conn.query(
+          'INSERT INTO cuerpro_plan_dias (plan_id, orden, nombre) VALUES (?, ?, ?)',
+          [p.insertId, i + 1, dia.nombre || `Día ${i + 1}`]
+        );
+        for (const [j, ej] of (dia.ejercicios || []).entries()) {
+          const [pe] = await conn.query(
+            `INSERT INTO cuerpro_plan_ejercicios (dia_id, ejercicio_id, orden, series, repeticiones, peso_sugerido)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [d.insertId, ej.ejercicio_id, j + 1, ej.series || 3, String(ej.repeticiones || '10'), ej.peso_sugerido ?? null]
+          );
+          for (const [k, altId] of (ej.alternativas || []).entries()) {
+            await conn.query(
+              'INSERT IGNORE INTO cuerpro_alternativas (plan_ejercicio_id, ejercicio_id, orden) VALUES (?, ?, ?)',
+              [pe.insertId, altId, k + 1]
+            );
+          }
+        }
+      }
+      await conn.commit();
+      return { plan_id: p.insertId, avisos: await avisosDelPlan(plan) };
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
+  },
+
+  // ── Encuentros y asistencia ──
+  async encuentro_proximo(req) {
+    const usuario = await sesion(req);
+    const [grupoId] = requireParams(req, 'grupo_id');
+    await miembro(grupoId, usuario.id);
+    const encuentro = await proximoEncuentro(grupoId);
+    if (!encuentro) return { encuentro: null };
+    const [confirmaciones] = await pool.query(
+      `SELECT u.id AS usuario_id, u.nombre, c.va, c.asistio
+       FROM cuerpro_miembros m
+       JOIN cuerpro_usuarios u ON u.id = m.usuario_id
+       LEFT JOIN cuerpro_confirmaciones c ON c.usuario_id = u.id AND c.encuentro_id = ?
+       WHERE m.grupo_id = ? ORDER BY u.nombre`,
+      [encuentro.id, grupoId]
+    );
+    const [[dia]] = encuentro.dia_id
+      ? await pool.query('SELECT id, nombre FROM cuerpro_plan_dias WHERE id = ?', [encuentro.dia_id])
+      : [[null]];
+    const rutina = dia ? await rutinaDelDia(dia.id, encuentro.id) : [];
+    const mia = confirmaciones.find(c => c.usuario_id === usuario.id);
+    const objetivo = mia?.va === 0 ? await objetivoDelMes(usuario.id, grupoId, encuentro.fecha_hora) : null;
+    return { encuentro: { ...encuentro, dia, rutina, confirmaciones }, objetivo };
+  },
+
+  async confirmar(req) {
+    const usuario = await sesion(req);
+    const [encuentroId, va] = requireParams(req, 'encuentro_id', 'va');
+    const [[encuentro]] = await pool.query('SELECT * FROM cuerpro_encuentros WHERE id = ?', [encuentroId]);
+    if (!encuentro) throw httpError(404, 'Encuentro no encontrado');
+    await miembro(encuentro.grupo_id, usuario.id);
+    const voy = va === true || va === '1' || va === 1 ? 1 : 0;
+    await pool.query(
+      `INSERT INTO cuerpro_confirmaciones (encuentro_id, usuario_id, va) VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE va = VALUES(va)`,
+      [encuentroId, usuario.id, voy]
+    );
+    if (!voy) {
+      const [coaches] = await pool.query(
+        "SELECT usuario_id FROM cuerpro_miembros WHERE grupo_id = ? AND rol = 'coach' AND usuario_id <> ?",
+        [encuentro.grupo_id, usuario.id]
+      );
+      notificar(coaches.map(c => c.usuario_id), {
+        title: 'Alguien no va',
+        body: `${usuario.nombre} no va al entrenamiento`,
+        data: { tipo: 'no_voy', encuentro_id: encuentro.id },
+      });
+      return { objetivo: await objetivoDelMes(usuario.id, encuentro.grupo_id, encuentro.fecha_hora) };
+    }
+    return { objetivo: null };
+  },
+
+  async asistencia(req) {
+    const usuario = await sesion(req);
+    const [encuentroId, usuarioId, asistio] = requireParams(req, 'encuentro_id', 'usuario_id', 'asistio');
+    const [[encuentro]] = await pool.query('SELECT * FROM cuerpro_encuentros WHERE id = ?', [encuentroId]);
+    if (!encuentro) throw httpError(404, 'Encuentro no encontrado');
+    await coach(encuentro.grupo_id, usuario.id);
+    await miembro(encuentro.grupo_id, usuarioId);
+    const vino = asistio === true || asistio === '1' || asistio === 1 ? 1 : 0;
+    await pool.query(
+      `INSERT INTO cuerpro_confirmaciones (encuentro_id, usuario_id, asistio) VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE asistio = VALUES(asistio)`,
+      [encuentroId, usuarioId, vino]
+    );
+    const ref = `encuentro:${encuentroId}`;
+    if (vino) await sumarPuntos(usuarioId, encuentro.grupo_id, 'asistencia', ref);
+    else await quitarPuntos(usuarioId, 'asistencia', ref);
+    return {};
+  },
+
+  // Máquina ocupada: el cambio vale para todo el grupo en ese encuentro
+  async alternativa_elegir(req) {
+    const usuario = await sesion(req);
+    const [encuentroId, planEjercicioId, ejercicioId] =
+      requireParams(req, 'encuentro_id', 'plan_ejercicio_id', 'ejercicio_id');
+    const [[encuentro]] = await pool.query('SELECT * FROM cuerpro_encuentros WHERE id = ?', [encuentroId]);
+    if (!encuentro) throw httpError(404, 'Encuentro no encontrado');
+    await miembro(encuentro.grupo_id, usuario.id);
+    const [valida] = await pool.query(
+      'SELECT 1 FROM cuerpro_alternativas WHERE plan_ejercicio_id = ? AND ejercicio_id = ?',
+      [planEjercicioId, ejercicioId]
+    );
+    const [original] = await pool.query(
+      'SELECT 1 FROM cuerpro_plan_ejercicios WHERE id = ? AND ejercicio_id = ?',
+      [planEjercicioId, ejercicioId]
+    );
+    if (original.length) {
+      // Volver al ejercicio original
+      await pool.query(
+        'DELETE FROM cuerpro_cambios_encuentro WHERE encuentro_id = ? AND plan_ejercicio_id = ?',
+        [encuentroId, planEjercicioId]
+      );
+      return {};
+    }
+    if (!valida.length) throw httpError(400, 'Esa alternativa no está cargada para este ejercicio');
+    await pool.query(
+      `INSERT INTO cuerpro_cambios_encuentro (encuentro_id, plan_ejercicio_id, ejercicio_id, usuario_id)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE ejercicio_id = VALUES(ejercicio_id), usuario_id = VALUES(usuario_id)`,
+      [encuentroId, planEjercicioId, ejercicioId, usuario.id]
+    );
+    return {};
+  },
+
+  // ── Registro de series y progreso ──
+  async serie_guardar(req) {
+    const usuario = await sesion(req);
+    const [ejercicioId, numero, repeticiones] = requireParams(req, 'ejercicio_id', 'numero', 'repeticiones');
+    const peso = Number(getParam(req, 'peso') || 0);
+    const encuentroId = getParam(req, 'encuentro_id') || null;
+    let grupoId = null;
+    if (encuentroId) {
+      const [[encuentro]] = await pool.query('SELECT grupo_id FROM cuerpro_encuentros WHERE id = ?', [encuentroId]);
+      if (!encuentro) throw httpError(404, 'Encuentro no encontrado');
+      await miembro(encuentro.grupo_id, usuario.id);
+      grupoId = encuentro.grupo_id;
+    }
+
+    const [[mejor]] = await pool.query(
+      'SELECT MAX(peso) AS peso, COUNT(*) AS veces FROM cuerpro_series WHERE usuario_id = ? AND ejercicio_id = ?',
+      [usuario.id, ejercicioId]
+    );
+    const [r] = await pool.query(
+      `INSERT INTO cuerpro_series (usuario_id, encuentro_id, ejercicio_id, numero, repeticiones, peso)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [usuario.id, encuentroId, ejercicioId, numero, repeticiones, peso]
+    );
+
+    // Récord personal: más peso que tu mejor marca (la primera vez no cuenta)
+    const record = mejor.veces > 0 && peso > Number(mejor.peso);
+    if (record) {
+      const hoy = new Date().toISOString().slice(0, 10);
+      await sumarPuntos(usuario.id, grupoId, 'record', `record:${ejercicioId}:${hoy}`);
+    }
+    return { id: r.insertId, record };
+  },
+
+  async progreso(req) {
+    const usuario = await sesion(req);
+    const usuarioId = getParam(req, 'usuario_id') || usuario.id;
+    if (String(usuarioId) !== String(usuario.id)) {
+      // Se puede ver el progreso de alguien con quien compartís grupo
+      const [comparten] = await pool.query(
+        `SELECT 1 FROM cuerpro_miembros a JOIN cuerpro_miembros b ON a.grupo_id = b.grupo_id
+         WHERE a.usuario_id = ? AND b.usuario_id = ? LIMIT 1`,
+        [usuario.id, usuarioId]
+      );
+      if (!comparten.length) throw httpError(403, 'Solo podés ver el progreso de tus compañeros de grupo');
+    }
+
+    const [musculos] = await pool.query(
+      `SELECT e.musculo_principal AS musculo, MAX(s.created_at) AS ultima_vez,
+              DATEDIFF(NOW(), MAX(s.created_at)) AS dias
+       FROM cuerpro_series s JOIN cuerpro_ejercicios e ON e.id = s.ejercicio_id
+       WHERE s.usuario_id = ? GROUP BY e.musculo_principal ORDER BY dias DESC`,
+      [usuarioId]
+    );
+    const [[conf]] = await pool.query(
+      `SELECT MIN(g.dias_aviso_musculo) AS dias FROM cuerpro_grupos g
+       JOIN cuerpro_miembros m ON m.grupo_id = g.id WHERE m.usuario_id = ?`,
+      [usuarioId]
+    );
+    const limite = conf?.dias || 5;
+    const avisos = musculos
+      .filter(m => m.dias >= limite)
+      .map(m => ({ musculo: m.musculo, dias: m.dias, texto: `Hace ${m.dias} días que no trabajás ${m.musculo}` }));
+
+    const [records] = await pool.query(
+      `SELECT e.id AS ejercicio_id, e.nombre, MAX(s.peso) AS mejor_peso, COUNT(*) AS series
+       FROM cuerpro_series s JOIN cuerpro_ejercicios e ON e.id = s.ejercicio_id
+       WHERE s.usuario_id = ? GROUP BY e.id, e.nombre ORDER BY e.nombre`,
+      [usuarioId]
+    );
+    const [[asist]] = await pool.query(
+      `SELECT SUM(asistio = 1) AS fue, SUM(asistio = 0) AS falto
+       FROM cuerpro_confirmaciones WHERE usuario_id = ?`,
+      [usuarioId]
+    );
+    return {
+      nivel: await nivelDe(usuarioId),
+      musculos,
+      avisos,
+      records,
+      asistencia: { fue: Number(asist.fue || 0), falto: Number(asist.falto || 0) },
+    };
+  },
+
+  async ranking(req) {
+    const usuario = await sesion(req);
+    const [grupoId] = requireParams(req, 'grupo_id');
+    const grupo = await miembro(grupoId, usuario.id);
+    if (!grupo.ranking_grupo) return { activo: false, ranking: [] };
+    const [rows] = await pool.query(
+      `SELECT u.id AS usuario_id, u.nombre, COALESCE(SUM(p.puntos), 0) AS puntos
+       FROM cuerpro_miembros m
+       JOIN cuerpro_usuarios u ON u.id = m.usuario_id
+       LEFT JOIN cuerpro_puntos p ON p.usuario_id = u.id AND p.temporada = ?
+       WHERE m.grupo_id = ? GROUP BY u.id, u.nombre ORDER BY puntos DESC`,
+      [temporadaActual(), grupoId]
+    );
+    return {
+      activo: true,
+      ranking: rows.map(r => ({ ...r, puntos: Number(r.puntos), nivel: NIVELES[nivelPorPuntos(Number(r.puntos))].nombre })),
+    };
+  },
+
+  // ── Propuestas al coach ──
+  async propuesta_crear(req) {
+    const usuario = await sesion(req);
+    const [grupoId, texto] = requireParams(req, 'grupo_id', 'texto');
+    await miembro(grupoId, usuario.id);
+    const [[plan]] = await pool.query(
+      'SELECT id FROM cuerpro_planes WHERE grupo_id = ? AND activo = 1 ORDER BY id DESC LIMIT 1',
+      [grupoId]
+    );
+    if (!plan) throw httpError(400, 'El grupo todavía no tiene plan');
+    const [r] = await pool.query(
+      'INSERT INTO cuerpro_propuestas (plan_id, usuario_id, texto) VALUES (?, ?, ?)',
+      [plan.id, usuario.id, texto]
+    );
+    const [coaches] = await pool.query(
+      "SELECT usuario_id FROM cuerpro_miembros WHERE grupo_id = ? AND rol = 'coach' AND usuario_id <> ?",
+      [grupoId, usuario.id]
+    );
+    notificar(coaches.map(c => c.usuario_id), {
+      title: 'Nueva propuesta para el plan',
+      body: `${usuario.nombre}: ${String(texto).slice(0, 80)}`,
+      data: { tipo: 'propuesta', propuesta_id: r.insertId },
+    });
+    return { id: r.insertId };
+  },
+
+  async propuestas(req) {
+    const usuario = await sesion(req);
+    const [grupoId] = requireParams(req, 'grupo_id');
+    await miembro(grupoId, usuario.id);
+    const [rows] = await pool.query(
+      `SELECT pr.id, pr.texto, pr.estado, pr.created_at, u.nombre AS autor
+       FROM cuerpro_propuestas pr
+       JOIN cuerpro_planes p ON p.id = pr.plan_id
+       JOIN cuerpro_usuarios u ON u.id = pr.usuario_id
+       WHERE p.grupo_id = ? ORDER BY pr.estado = 'pendiente' DESC, pr.created_at DESC`,
+      [grupoId]
+    );
+    return { propuestas: rows };
+  },
+
+  async propuesta_resolver(req) {
+    const usuario = await sesion(req);
+    const [propuestaId, estado] = requireParams(req, 'propuesta_id', 'estado');
+    if (estado !== 'aceptada' && estado !== 'rechazada') throw httpError(400, 'Estado inválido');
+    const [[pr]] = await pool.query(
+      `SELECT pr.usuario_id, p.grupo_id FROM cuerpro_propuestas pr
+       JOIN cuerpro_planes p ON p.id = pr.plan_id WHERE pr.id = ?`,
+      [propuestaId]
+    );
+    if (!pr) throw httpError(404, 'Propuesta no encontrada');
+    await coach(pr.grupo_id, usuario.id);
+    await pool.query('UPDATE cuerpro_propuestas SET estado = ? WHERE id = ?', [estado, propuestaId]);
+    notificar([pr.usuario_id], {
+      title: estado === 'aceptada' ? 'Aceptaron tu propuesta' : 'Rechazaron tu propuesta',
+      body: `${usuario.nombre} revisó tu propuesta para el plan`,
+      data: { tipo: 'propuesta', propuesta_id: Number(propuestaId) },
+    });
+    return {};
+  },
+};
+
+// Avisa al que arma el plan si un músculo se repite en dos días seguidos
+async function avisosDelPlan(plan) {
+  const ids = plan.dias.flatMap(d => (d.ejercicios || []).map(e => e.ejercicio_id));
+  if (!ids.length) return [];
+  const [rows] = await pool.query(
+    'SELECT id, musculo_principal FROM cuerpro_ejercicios WHERE id IN (?)',
+    [ids]
+  );
+  const musculo = Object.fromEntries(rows.map(r => [r.id, r.musculo_principal]));
+  const porDia = plan.dias.map(d => new Set((d.ejercicios || []).map(e => musculo[e.ejercicio_id])));
+  const avisos = [];
+  for (let i = 0; i + 1 < porDia.length; i++) {
+    for (const m of porDia[i]) {
+      if (porDia[i + 1].has(m)) avisos.push(`${m} está en el día ${i + 1} y en el día ${i + 2}`);
+    }
+  }
+  return avisos;
+}
+
+// ─── Handler principal (action-based) ────────────────────────────────────────
+app.all('/api', async (req, res) => {
+  const action = getParam(req, 'action');
+  const accion = Object.prototype.hasOwnProperty.call(acciones, action) ? acciones[action] : null;
+  if (!accion) return err(res, `Acción desconocida: ${action}`, 404);
+
+  try {
+    return ok(res, await accion(req));
+  } catch (e) {
+    if (e.statusCode) return err(res, e.message, e.statusCode);
+    console.error('Error en acción', action, e);
+    return err(res, 'Error interno', 500);
+  }
+});
+
+// ─── Start ────────────────────────────────────────────────────────────────────
+if (require.main === module) {
+  initTables()
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log(`💪 CuerPro API corriendo en puerto ${PORT}`);
+      });
+    })
+    .catch(e => {
+      console.error('Error iniciando:', e.message);
+      process.exit(1);
+    });
+}
+
+module.exports = { app, pool, initTables };
