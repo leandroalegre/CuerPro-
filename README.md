@@ -69,7 +69,6 @@ Niveles por mes: Bronce 0, Plata 100, Oro 200, Platino 300, Diamante 380. Al emp
 
 ## Qué falta
 
-- Pantalla para armar el plan (la API `plan_guardar` ya está) y pantalla de propuestas al coach.
 - Puntos semanales (semana completa, rutina completa, sin avisos) y recordatorio antes del encuentro: necesitan una tarea programada.
 - Biblioteca de planes publicados entre grupos.
 - Ranking entre grupos.

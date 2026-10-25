@@ -79,3 +79,17 @@ export const EQUIPO: Record<string, string> = {
   peso_corporal: 'peso corporal',
   otro: 'otro',
 };
+
+export interface Ejercicio {
+  id: number;
+  grupo_id: number | null;
+  nombre: string;
+  musculo_principal: string;
+  musculos_secundarios: string;
+  equipo: string;
+  movimiento: string;
+}
+
+export interface PlanDia { id: number; orden: number; nombre: string; ejercicios: EjercicioRutina[] }
+export interface Plan { id: number; nombre: string; dias: PlanDia[] }
+export interface Propuesta { id: number; texto: string; estado: 'pendiente' | 'aceptada' | 'rechazada'; created_at: string; autor: string }
