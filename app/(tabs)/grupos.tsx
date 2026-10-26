@@ -6,9 +6,9 @@
  */
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Linking, Platform, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo } from '../../components/ui';
-import { APP_VERSION, DESARROLLADOR } from '../../constants/app';
+import { APP_VERSION, DESARROLLADOR, URL_DESCARGA } from '../../constants/app';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useSesion } from '../../hooks/useSesion';
 import { api } from '../../lib/api';
@@ -68,6 +68,17 @@ export default function GruposScreen() {
     }
   };
 
+  const textoInvitacion = () =>
+    `¡Sumate a mi grupo "${grupo?.nombre}" en CuerPro! 💪\n\n` +
+    `1. Bajá la app: ${URL_DESCARGA}\n` +
+    `2. Creá tu cuenta.\n` +
+    `3. En Grupos, poné el código: *${grupo?.codigo_invitacion}*`;
+
+  const invitarPorWhatsApp = () =>
+    Linking.openURL(`https://wa.me/?text=${encodeURIComponent(textoInvitacion())}`).catch(() =>
+      Alert.alert('No se pudo abrir WhatsApp', textoInvitacion()),
+    );
+
   const guardarHorarios = async () => {
     if (!grupo) return;
     const lista = Object.entries(horas).map(([d, hora]) => ({ dia_semana: Number(d), hora: hora.trim() }));
@@ -105,6 +116,12 @@ export default function GruposScreen() {
         <Card>
           <Titulo>{grupo.nombre}</Titulo>
           <Texto muted>{`Código de invitación: ${grupo.codigo_invitacion}`}</Texto>
+          <View style={styles.compartir}>
+            <Boton titulo="Invitar por WhatsApp" onPress={invitarPorWhatsApp} style={{ flex: 1 }} />
+            {Platform.OS !== 'web' && (
+              <Boton titulo="Compartir" tipo="secundario" onPress={() => Share.share({ message: textoInvitacion() })} style={{ flex: 1 }} />
+            )}
+          </View>
           <Etiqueta>{`Miembros (${detalle.miembros.length})`}</Etiqueta>
           {detalle.miembros.map(m => (
             <View key={m.id} style={styles.fila}>
@@ -195,6 +212,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.bgMuted,
   },
   diaActivo: { backgroundColor: Colors.accent },
+  compartir: { flexDirection: 'row', gap: Spacing.sm, marginVertical: Spacing.sm },
   horaDia: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   diaTexto: { ...Typography.label, color: Colors.textPrimary },
   creditos: { ...Typography.caption, color: Colors.textMuted, textAlign: 'center', marginTop: Spacing.lg, lineHeight: 18 },
