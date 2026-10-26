@@ -4,6 +4,7 @@ import { router, Stack, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StyleSheet, View } from 'react-native';
 import { Colors } from '../constants/theme';
 import { useNotificaciones } from '../hooks/useNotificaciones';
@@ -60,11 +61,13 @@ function Navegacion() {
 
 export default function RootLayout() {
   return (
-    <ThemeProvider value={tema}>
-      <SesionProvider>
-        <StatusBar style="light" />
-        <Navegacion />
-      </SesionProvider>
-    </ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ThemeProvider value={tema}>
+        <SesionProvider>
+          <StatusBar style="light" />
+          <Navegacion />
+        </SesionProvider>
+      </ThemeProvider>
+    </GestureHandlerRootView>
   );
 }

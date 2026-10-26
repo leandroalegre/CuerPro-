@@ -1,13 +1,15 @@
 /**
  * Pantalla PLAN
  * - Ver el plan del grupo: días, ejercicios, series y alternativas
- * - El coach (o todos, si el grupo es abierto) lo arma y lo edita
+ * - El coach (o todos, si el grupo es abierto) lo arma y lo edita; los ejercicios
+ *   son tarjetas que se arrastran para cambiar el orden
  * - Los miembros proponen cambios y el coach los acepta o rechaza
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Alert, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { NestableDraggableFlatList, NestableScrollContainer, RenderItemParams, ScaleDecorator } from 'react-native-draggable-flatlist';
 import { EjercicioNuevo, SelectorEjercicio } from '../../components/SelectorEjercicio';
 import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
@@ -41,6 +43,7 @@ export default function PlanScreen() {
   const [propuestas, setPropuestas] = useState<Propuesta[]>([]);
   const [cargando, setCargando] = useState(false);
   const [editando, setEditando] = useState(false);
+  const [abierto, setAbierto] = useState<string | null>(null); // tarjeta de ejercicio abierta para editar
   const [nombrePlan, setNombrePlan] = useState('');
   const [dias, setDias] = useState<DiaEdit[]>([]);
   const [selector, setSelector] = useState<Selector>(null);
@@ -112,15 +115,25 @@ export default function PlanScreen() {
       ? { ...d, ejercicios: d.ejercicios.map((e, m) => (m === k ? { ...e, ...cambios } : e)) }
       : d)));
 
-  const moverEj = (i: number, k: number, delta: number) =>
-    setDias(ds => ds.map((d, j) => {
-      if (j !== i) return d;
-      const lista = [...d.ejercicios];
-      const destino = k + delta;
-      if (destino < 0 || destino >= lista.length) return d;
-      [lista[k], lista[destino]] = [lista[destino], lista[k]];
-      return { ...d, ejercicios: lista };
-    }));
+  const moverDia = (i: number, delta: number) =>
+    setDias(ds => {
+      const destino = i + delta;
+      if (destino < 0 || destino >= ds.length) return ds;
+      const lista = [...ds];
+      [lista[i], lista[destino]] = [lista[destino], lista[i]];
+      return lista;
+    });
+
+  // Saca el ejercicio de un día y lo pone al final de otro
+  const pasarADia = (i: number, k: number, j: number) =>
+    setDias(ds => {
+      const ej = ds[i].ejercicios[k];
+      return ds.map((d, n) => {
+        if (n === i) return { ...d, ejercicios: d.ejercicios.filter((_, m) => m !== k) };
+        if (n === j) return { ...d, ejercicios: [...d.ejercicios, ej] };
+        return d;
+      });
+    });
 
   const quitarEj = (i: number, k: number) =>
     setDias(ds => ds.map((d, j) => (j === i ? { ...d, ejercicios: d.ejercicios.filter((_, m) => m !== k) } : d)));
@@ -208,14 +221,25 @@ export default function PlanScreen() {
 
   if (editando) {
     return (
-      <ScrollView style={pantalla.scroll} contentContainerStyle={pantalla.contenido} keyboardShouldPersistTaps="handled">
+      <NestableScrollContainer style={pantalla.scroll} contentContainerStyle={pantalla.contenido} keyboardShouldPersistTaps="handled">
         <Etiqueta>Nombre del plan</Etiqueta>
         <Campo value={nombrePlan} onChangeText={setNombrePlan} placeholder="Plan" />
+        <Texto muted>Arrastrá cada ejercicio desde ≡ para cambiar el orden. Tocalo para editarlo.</Texto>
 
         {dias.map((d, i) => (
           <Card key={d.key}>
             <View style={styles.filaTitulo}>
               <Campo style={styles.nombreDia} value={d.nombre} onChangeText={t => cambiarDia(i, { nombre: t })} placeholder={`Día ${i + 1}`} />
+              {dias.length > 1 && (
+                <View style={styles.acciones}>
+                  <TouchableOpacity onPress={() => moverDia(i, -1)} disabled={i === 0} accessibilityLabel="Subir día">
+                    <Ionicons name="chevron-up" size={22} color={i === 0 ? Colors.border : Colors.textSecondary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => moverDia(i, 1)} disabled={i === dias.length - 1} accessibilityLabel="Bajar día">
+                    <Ionicons name="chevron-down" size={22} color={i === dias.length - 1 ? Colors.border : Colors.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+              )}
               {dias.length > 1 && (
                 <TouchableOpacity onPress={() => setDias(dias.filter((_, j) => j !== i))} accessibilityLabel="Quitar día">
                   <Ionicons name="trash-outline" size={22} color={Colors.error} />
@@ -223,74 +247,107 @@ export default function PlanScreen() {
               )}
             </View>
 
-            {d.ejercicios.map((e, k) => (
-              <View key={e.key} style={styles.ejEditor}>
-                <View style={styles.filaTitulo}>
-                  <Text style={styles.ejNombre}>{e.ejercicio.nombre}</Text>
-                  <View style={styles.acciones}>
-                    <TouchableOpacity onPress={() => moverEj(i, k, -1)} accessibilityLabel="Subir">
-                      <Ionicons name="chevron-up" size={22} color={Colors.textSecondary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => moverEj(i, k, 1)} accessibilityLabel="Bajar">
-                      <Ionicons name="chevron-down" size={22} color={Colors.textSecondary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => quitarEj(i, k)} accessibilityLabel="Quitar ejercicio">
-                      <Ionicons name="close" size={22} color={Colors.error} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-                <View style={styles.filaCampos}>
-                  <View style={styles.campoChico}>
-                    <Text style={styles.mini}>Series</Text>
-                    <Campo style={styles.sinMargen} value={e.series} onChangeText={t => cambiarEj(i, k, { series: t })} keyboardType="number-pad" />
-                  </View>
-                  <View style={styles.campoChico}>
-                    <Text style={styles.mini}>Reps</Text>
-                    <Campo style={styles.sinMargen} value={e.repeticiones} onChangeText={t => cambiarEj(i, k, { repeticiones: t })} placeholder="8-10" />
-                  </View>
-                  <View style={styles.campoChico}>
-                    <Text style={styles.mini}>Kg sugerido</Text>
-                    <Campo style={styles.sinMargen} value={e.peso} onChangeText={t => cambiarEj(i, k, { peso: t })} keyboardType="decimal-pad" />
-                  </View>
-                </View>
-                <Text style={styles.mini}>Carga</Text>
-                <View style={styles.alternativas}>
-                  {CARGAS.map(c => (
-                    <Opcion key={c} texto={c} activa={e.carga === c} onPress={() => cambiarEj(i, k, { carga: e.carga === c ? null : c })} />
-                  ))}
-                </View>
-                <Text style={[styles.mini, { marginTop: Spacing.sm }]}>Pausa entre series</Text>
-                <View style={styles.alternativas}>
-                  {PAUSAS.map(p => (
-                    <Opcion key={p} texto={textoPausa(p)} activa={e.descanso === p} onPress={() => cambiarEj(i, k, { descanso: e.descanso === p ? null : p })} />
-                  ))}
-                </View>
-                <Campo
-                  style={{ marginTop: Spacing.sm }}
-                  value={e.nota}
-                  onChangeText={t => cambiarEj(i, k, { nota: t })}
-                  placeholder="Nota para el grupo (ej: isometría 1'' arriba)"
-                  maxLength={200}
-                />
-                <Text style={styles.mini}>Alternativas si la máquina está ocupada</Text>
-                <View style={styles.alternativas}>
-                  {e.alternativas.map((a, n) => (
-                    <TouchableOpacity
-                      key={a.id}
-                      style={styles.alt}
-                      onPress={() => cambiarEj(i, k, { alternativas: e.alternativas.filter((_, m) => m !== n) })}
-                    >
-                      <Text style={styles.altTexto}>{a.nombre}</Text>
-                      <Ionicons name="close" size={14} color={Colors.textSecondary} />
-                    </TouchableOpacity>
-                  ))}
-                  <TouchableOpacity style={[styles.alt, styles.altAgregar]} onPress={() => setSelector({ modo: 'alternativa', dia: i, ej: k })}>
-                    <Ionicons name="add" size={14} color={Colors.accent} />
-                    <Text style={[styles.altTexto, { color: Colors.accent }]}>Alternativa</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))}
+            <NestableDraggableFlatList
+              data={d.ejercicios}
+              keyExtractor={e => e.key}
+              onDragEnd={({ data }) => cambiarDia(i, { ejercicios: data })}
+              activationDistance={8}
+              renderItem={({ item: e, drag, isActive, getIndex }: RenderItemParams<EjEdit>) => {
+                const k = getIndex() ?? 0;
+                const abiertoEste = abierto === e.key;
+                return (
+                  <ScaleDecorator>
+                    <View style={[styles.tarjeta, isActive && styles.tarjetaActiva]}>
+                      <View style={styles.filaTitulo}>
+                        <TouchableOpacity onPressIn={drag} onLongPress={drag} delayLongPress={150} style={styles.manija} accessibilityLabel="Arrastrar para mover">
+                          <Ionicons name="reorder-three" size={26} color={Colors.textMuted} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={{ flex: 1, minWidth: 0 }} onPress={() => setAbierto(abiertoEste ? null : e.key)}>
+                          <Text style={styles.ejNombre}>{e.ejercicio.nombre}</Text>
+                          <Text style={styles.mini}>
+                            {resumenEjercicio({
+                              series: Number(e.series) || 0, repeticiones: e.repeticiones,
+                              peso_sugerido: e.peso || null, carga: e.carga, descanso_seg: e.descanso,
+                            })}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => setAbierto(abiertoEste ? null : e.key)} accessibilityLabel={abiertoEste ? 'Cerrar' : 'Editar'}>
+                          <Ionicons name={abiertoEste ? 'chevron-up' : 'create-outline'} size={20} color={Colors.textSecondary} />
+                        </TouchableOpacity>
+                      </View>
+
+                      {abiertoEste && (
+                        <View style={{ marginTop: Spacing.sm }}>
+                          <View style={styles.filaCampos}>
+                            <View style={styles.campoChico}>
+                              <Text style={styles.mini}>Series</Text>
+                              <Campo style={styles.sinMargen} value={e.series} onChangeText={t => cambiarEj(i, k, { series: t })} keyboardType="number-pad" />
+                            </View>
+                            <View style={styles.campoChico}>
+                              <Text style={styles.mini}>Reps</Text>
+                              <Campo style={styles.sinMargen} value={e.repeticiones} onChangeText={t => cambiarEj(i, k, { repeticiones: t })} placeholder="8-10" />
+                            </View>
+                            <View style={styles.campoChico}>
+                              <Text style={styles.mini}>Kg sugerido</Text>
+                              <Campo style={styles.sinMargen} value={e.peso} onChangeText={t => cambiarEj(i, k, { peso: t })} keyboardType="decimal-pad" />
+                            </View>
+                          </View>
+                          <Text style={styles.mini}>Carga</Text>
+                          <View style={styles.alternativas}>
+                            {CARGAS.map(c => (
+                              <Opcion key={c} texto={c} activa={e.carga === c} onPress={() => cambiarEj(i, k, { carga: e.carga === c ? null : c })} />
+                            ))}
+                          </View>
+                          <Text style={[styles.mini, { marginTop: Spacing.sm }]}>Pausa entre series</Text>
+                          <View style={styles.alternativas}>
+                            {PAUSAS.map(p => (
+                              <Opcion key={p} texto={textoPausa(p)} activa={e.descanso === p} onPress={() => cambiarEj(i, k, { descanso: e.descanso === p ? null : p })} />
+                            ))}
+                          </View>
+                          <Campo
+                            style={{ marginTop: Spacing.sm }}
+                            value={e.nota}
+                            onChangeText={t => cambiarEj(i, k, { nota: t })}
+                            placeholder="Nota para el grupo (ej: isometría 1'' arriba)"
+                            maxLength={200}
+                          />
+                          <Text style={styles.mini}>Alternativas si la máquina está ocupada</Text>
+                          <View style={styles.alternativas}>
+                            {e.alternativas.map((a, n) => (
+                              <TouchableOpacity
+                                key={a.id}
+                                style={styles.alt}
+                                onPress={() => cambiarEj(i, k, { alternativas: e.alternativas.filter((_, m) => m !== n) })}
+                              >
+                                <Text style={styles.altTexto}>{a.nombre}</Text>
+                                <Ionicons name="close" size={14} color={Colors.textSecondary} />
+                              </TouchableOpacity>
+                            ))}
+                            <TouchableOpacity style={[styles.alt, styles.altAgregar]} onPress={() => setSelector({ modo: 'alternativa', dia: i, ej: k })}>
+                              <Ionicons name="add" size={14} color={Colors.accent} />
+                              <Text style={[styles.altTexto, { color: Colors.accent }]}>Alternativa</Text>
+                            </TouchableOpacity>
+                          </View>
+                          {dias.length > 1 && (
+                            <>
+                              <Text style={[styles.mini, { marginTop: Spacing.sm }]}>Pasar a otro día</Text>
+                              <View style={styles.alternativas}>
+                                {dias.map((otro, j) => j !== i && (
+                                  <Opcion key={otro.key} texto={otro.nombre || `Día ${j + 1}`} activa={false} onPress={() => pasarADia(i, k, j)} />
+                                ))}
+                              </View>
+                            </>
+                          )}
+                          <TouchableOpacity onPress={() => quitarEj(i, k)} style={{ marginTop: Spacing.sm, alignSelf: 'flex-start' }}>
+                            <Text style={[styles.altTexto, { color: Colors.error }]}>Quitar del plan</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+                  </ScaleDecorator>
+                );
+              }}
+            />
 
             <Boton titulo="Agregar ejercicio" tipo="secundario" onPress={() => setSelector({ modo: 'ejercicio', dia: i })} style={{ marginTop: Spacing.sm }} />
           </Card>
@@ -316,7 +373,7 @@ export default function PlanScreen() {
           onCerrar={() => setSelector(null)}
           onCrear={crearEjercicio}
         />
-      </ScrollView>
+      </NestableScrollContainer>
     );
   }
 
@@ -409,7 +466,12 @@ export default function PlanScreen() {
 const styles = StyleSheet.create({
   filaTitulo: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.sm },
   nombreDia: { flex: 1, minWidth: 0, marginBottom: 0, fontWeight: '600' },
-  ejEditor: { borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: Spacing.sm, marginTop: Spacing.sm },
+  tarjeta: {
+    backgroundColor: Colors.bgInput, borderRadius: Radius.md, padding: Spacing.sm,
+    marginTop: Spacing.sm, borderWidth: 1, borderColor: Colors.border,
+  },
+  tarjetaActiva: { borderColor: Colors.accent, backgroundColor: Colors.bgMuted },
+  manija: { paddingRight: Spacing.xs, paddingVertical: Spacing.xs },
   ejVista: { borderTopWidth: 1, borderTopColor: Colors.border, paddingVertical: Spacing.sm },
   ejNombre: { ...Typography.body, color: Colors.textPrimary, flexShrink: 1 },
   diaNombre: { ...Typography.titleMd, color: Colors.textPrimary, marginBottom: Spacing.xs },

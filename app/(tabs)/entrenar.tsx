@@ -4,12 +4,15 @@
  * - Anotar repeticiones y peso de cada serie
  * - "Máquina ocupada": elegir una alternativa (cambia para todo el grupo)
  * - Al anotar una serie arranca el descanso que puso el coach
+ * - Cada uno puede arrastrar las tarjetas para hacer los ejercicios en otro orden
  * - Por mi cuenta: cualquier día del plan, fuera del encuentro; las series y
  *   los récords cuentan igual, la asistencia no
  */
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { Alert, Platform, RefreshControl, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
+import { NestableDraggableFlatList, NestableScrollContainer, ScaleDecorator } from 'react-native-draggable-flatlist';
 import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useEncuentro } from '../../hooks/useEncuentro';
@@ -45,7 +48,7 @@ export default function EntrenarScreen() {
   const dia = plan?.dias.find(d => d.id === diaId);
 
   return (
-    <ScrollView
+    <NestableScrollContainer
       style={pantalla.scroll}
       contentContainerStyle={pantalla.contenido}
       refreshControl={<RefreshControl refreshing={cargando} onRefresh={solo ? cargarPlan : recargar} tintColor={Colors.accent} />}
@@ -61,9 +64,7 @@ export default function EntrenarScreen() {
       ) : (
         <>
           <Etiqueta>{encuentro.dia?.nombre}</Etiqueta>
-          {encuentro.rutina.map(ej => (
-            <EjercicioCard key={ej.plan_ejercicio_id} ej={ej} encuentroId={encuentro.id} onCambio={recargar} />
-          ))}
+          <ListaRutina rutina={encuentro.rutina} encuentroId={encuentro.id} onCambio={recargar} />
         </>
       ))}
 
@@ -79,12 +80,10 @@ export default function EntrenarScreen() {
               <Modo key={d.id} texto={d.nombre} activo={d.id === diaId} onPress={() => setDiaId(d.id)} />
             ))}
           </View>
-          {dia?.ejercicios.map(ej => (
-            <EjercicioCard key={`${dia.id}-${ej.plan_ejercicio_id}`} ej={ej} encuentroId={null} onCambio={() => {}} />
-          ))}
+          {dia && <ListaRutina key={dia.id} rutina={dia.ejercicios} encuentroId={null} onCambio={() => {}} />}
         </>
       ))}
-    </ScrollView>
+    </NestableScrollContainer>
   );
 }
 
@@ -96,14 +95,51 @@ function Modo({ texto, activo, onPress }: { texto: string; activo: boolean; onPr
   );
 }
 
+// La rutina como tarjetas que se arrastran desde ≡; el orden es solo para vos
+function ListaRutina({
+  rutina,
+  encuentroId,
+  onCambio,
+}: {
+  rutina: EjercicioRutina[];
+  encuentroId: number | null;
+  onCambio: () => void;
+}) {
+  const [orden, setOrden] = useState<number[]>([]);
+  const porId = new Map(rutina.map(e => [e.plan_ejercicio_id, e]));
+  // Respeta el orden que armaste; lo que no estaba (o si cambió el plan) va al final, en el orden del plan
+  const datos = [
+    ...orden.map(id => porId.get(id)).filter((e): e is EjercicioRutina => !!e),
+    ...rutina.filter(e => !orden.includes(e.plan_ejercicio_id)),
+  ];
+
+  return (
+    <NestableDraggableFlatList
+      data={datos}
+      keyExtractor={e => String(e.plan_ejercicio_id)}
+      onDragEnd={({ data }) => setOrden(data.map(e => e.plan_ejercicio_id))}
+      activationDistance={8}
+      renderItem={({ item, drag, isActive }) => (
+        <ScaleDecorator>
+          <EjercicioCard ej={item} encuentroId={encuentroId} onCambio={onCambio} drag={drag} activo={isActive} />
+        </ScaleDecorator>
+      )}
+    />
+  );
+}
+
 function EjercicioCard({
   ej,
   encuentroId,
   onCambio,
+  drag,
+  activo,
 }: {
   ej: EjercicioRutina;
   encuentroId: number | null; // null: por mi cuenta
   onCambio: () => void;
+  drag: () => void;
+  activo: boolean;
 }) {
   const { token } = useSesion();
   const [verAlternativas, setVerAlternativas] = useState(false);
@@ -162,8 +198,15 @@ function EjercicioCard({
   };
 
   return (
-    <Card>
-      <Titulo>{actual.nombre}</Titulo>
+    <Card style={activo ? { borderColor: Colors.accent } : undefined}>
+      <View style={styles.cabecera}>
+        <TouchableOpacity onPressIn={drag} onLongPress={drag} delayLongPress={150} accessibilityLabel="Arrastrar para mover">
+          <Ionicons name="reorder-three" size={26} color={Colors.textMuted} />
+        </TouchableOpacity>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Titulo>{actual.nombre}</Titulo>
+        </View>
+      </View>
       {propia ? (
         <Texto muted>{`En lugar de ${ej.nombre}`}</Texto>
       ) : ej.cambio && <Texto muted>{`En lugar de ${ej.nombre} (lo cambió ${ej.cambio.elegido_por})`}</Texto>}
@@ -246,6 +289,7 @@ function Descanso({ fin, onTerminar }: { fin: number; onTerminar: () => void }) 
 }
 
 const styles = StyleSheet.create({
+  cabecera: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   descanso: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: Spacing.md,
     padding: Spacing.sm, borderRadius: Radius.md, backgroundColor: Colors.accentGlow,
