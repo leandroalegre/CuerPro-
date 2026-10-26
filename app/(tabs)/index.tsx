@@ -198,6 +198,10 @@ export default function HoyScreen() {
             </Card>
           )}
 
+          {mia?.va === 0 && (
+            <Boton titulo="Entrenar por mi cuenta" tipo="secundario" onPress={() => router.push('/entrenar?modo=solo')} />
+          )}
+
           <Card>
             <Titulo>Quién va</Titulo>
             {esCoach && <Texto muted>Tocá a cada uno cuando llegue para marcar la asistencia.</Texto>}
