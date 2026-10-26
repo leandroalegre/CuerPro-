@@ -30,6 +30,9 @@ App Expo → https://cuerpro.sistemascloud.ar/api.php
 - Al confirmar se puede dejar una `nota` ("llego 15 tarde"); a los coaches les llega por push.
 - Columnas nuevas en tablas que ya existen en producción: agregarlas también a `COLUMNAS_NUEVAS` en `server/index.js`.
 
+- Ejercicios del plan: series, repeticiones (texto: "8-10" o "6 min" para los por tiempo), peso sugerido, `carga` (liviano/moderado/pesado), `descanso_seg` y `nota` del coach.
+- Cargar un plan escrito a mano: `cd server && node scripts/cargar-plan.js <email del coach> planes/<archivo>.json ["grupo"]` (crea los ejercicios que falten para ese grupo).
+
 ## Pruebas
 - `cd server && CUERPRO_TEST_DB=1 DB_NAME=... npm test`: flujo completo contra MySQL (borra las tablas `cuerpro_*`).
 - `npx tsc --noEmit` en la raíz para la app.
