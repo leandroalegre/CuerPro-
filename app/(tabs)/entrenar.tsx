@@ -3,17 +3,18 @@
  * - Rutina del día, ejercicio por ejercicio
  * - Anotar repeticiones y peso de cada serie
  * - "Máquina ocupada": elegir una alternativa (cambia para todo el grupo)
+ * - Al anotar una serie arranca el descanso que puso el coach
  * - Por mi cuenta: cualquier día del plan, fuera del encuentro; las series y
  *   los récords cuentan igual, la asistencia no
  */
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Alert, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Alert, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
 import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useEncuentro } from '../../hooks/useEncuentro';
 import { useSesion } from '../../hooks/useSesion';
-import { api, EjercicioRutina, EQUIPO, Plan } from '../../lib/api';
+import { api, EjercicioRutina, EQUIPO, esPorTiempo, Plan, resumenEjercicio } from '../../lib/api';
 
 export default function EntrenarScreen() {
   const { token, grupo } = useSesion();
@@ -110,6 +111,8 @@ function EjercicioCard({
   const [peso, setPeso] = useState(ej.peso_sugerido ? String(Number(ej.peso_sugerido)) : '');
   const [hechas, setHechas] = useState<{ reps: number; peso: number; record: boolean }[]>([]);
   const [guardando, setGuardando] = useState(false);
+  const [finDescanso, setFinDescanso] = useState<number | null>(null);
+  const porTiempo = esPorTiempo(ej.repeticiones);
 
   // Por mi cuenta, la alternativa es solo para vos y no se guarda
   const [cambioPropio, setCambioPropio] = useState<number | null>(null);
@@ -149,6 +152,7 @@ function EjercicioCard({
         peso: p,
       }, token);
       setHechas([...hechas, { reps: r, peso: p, record: data.record }]);
+      if (ej.descanso_seg && hechas.length + 1 < ej.series) setFinDescanso(Date.now() + ej.descanso_seg * 1000);
       if (data.record) Alert.alert('¡Récord personal!', `Sumaste 15 puntos con ${p} kg.`);
     } catch (e: any) {
       Alert.alert('Error', e.message);
@@ -163,15 +167,26 @@ function EjercicioCard({
       {propia ? (
         <Texto muted>{`En lugar de ${ej.nombre}`}</Texto>
       ) : ej.cambio && <Texto muted>{`En lugar de ${ej.nombre} (lo cambió ${ej.cambio.elegido_por})`}</Texto>}
-      <Texto muted>{`${ej.series} series de ${ej.repeticiones} · ${ej.musculo_principal}`}</Texto>
+      <Texto muted>{`${resumenEjercicio(ej)} · ${ej.musculo_principal}`}</Texto>
+      {!!ej.nota && <Text style={styles.nota}>{ej.nota}</Text>}
 
-      {hechas.map((s, i) => (
+      {!porTiempo && hechas.map((s, i) => (
         <Text key={i} style={styles.serie}>
           {`Serie ${i + 1}: ${s.reps} reps × ${s.peso} kg${s.record ? '  🏆' : ''}`}
         </Text>
       ))}
 
-      {hechas.length < ej.series && (
+      {finDescanso && <Descanso fin={finDescanso} onTerminar={() => setFinDescanso(null)} />}
+
+      {porTiempo && (
+        hechas.length ? (
+          <Text style={styles.serie}>Hecho ✓</Text>
+        ) : (
+          <Boton titulo="Listo" tipo="secundario" onPress={() => setHechas([{ reps: 0, peso: 0, record: false }])} style={{ marginTop: Spacing.md }} />
+        )
+      )}
+
+      {!porTiempo && hechas.length < ej.series && (
         <View style={styles.fila}>
           <Campo style={styles.campo} value={reps} onChangeText={setReps} keyboardType="number-pad" placeholder="Reps" />
           <Campo style={styles.campo} value={peso} onChangeText={setPeso} keyboardType="decimal-pad" placeholder="Kg" />
@@ -204,7 +219,40 @@ function EjercicioCard({
   );
 }
 
+// Cuenta regresiva del descanso entre series; vibra al terminar
+function Descanso({ fin, onTerminar }: { fin: number; onTerminar: () => void }) {
+  const [ahora, setAhora] = useState(Date.now());
+  const quedan = Math.max(0, Math.ceil((fin - ahora) / 1000));
+
+  useEffect(() => {
+    const t = setInterval(() => setAhora(Date.now()), 250);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    if (quedan > 0) return;
+    if (Platform.OS !== 'web') Vibration.vibrate([0, 400, 200, 400]);
+    onTerminar();
+  }, [quedan, onTerminar]);
+
+  return (
+    <View style={styles.descanso}>
+      <Text style={styles.descansoTexto}>{`Descanso ${Math.floor(quedan / 60)}:${String(quedan % 60).padStart(2, '0')}`}</Text>
+      <TouchableOpacity onPress={onTerminar}>
+        <Text style={styles.saltar}>Saltar</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  descanso: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: Spacing.md,
+    padding: Spacing.sm, borderRadius: Radius.md, backgroundColor: Colors.accentGlow,
+  },
+  descansoTexto: { ...Typography.titleMd, color: Colors.accent },
+  saltar: { ...Typography.label, color: Colors.textSecondary },
+  nota: { ...Typography.caption, color: Colors.accent, fontStyle: 'italic', marginTop: Spacing.xs },
   modos: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.xs, marginBottom: Spacing.md },
   modo: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: Radius.full, backgroundColor: Colors.bgMuted },
   modoActivo: { backgroundColor: Colors.accent },

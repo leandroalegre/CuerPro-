@@ -75,6 +75,7 @@ test('flujo completo de un grupo', { skip: !enabled && 'Definí CUERPRO_TEST_DB=
       dias: [
         { nombre: 'Pecho y tríceps', ejercicios: [
           { ejercicio_id: id('Press de banca plano'), series: 4, repeticiones: '8-10',
+            carga: 'pesado', descanso_seg: 120, nota: 'Bajar en 3 segundos',
             alternativas: [id('Press de pecho en máquina'), id('Press de banca con mancuernas')] },
           { ejercicio_id: id('Extensión de tríceps en polea') },
         ] },
@@ -97,6 +98,10 @@ test('flujo completo de un grupo', { skip: !enabled && 'Definí CUERPRO_TEST_DB=
   assert.equal(enc.dia.nombre, 'Pecho y tríceps');
   assert.equal(enc.rutina.length, 2);
   assert.equal(enc.rutina[0].alternativas.length, 2);
+  assert.equal(enc.rutina[0].carga, 'pesado');
+  assert.equal(enc.rutina[0].descanso_seg, 120);
+  assert.equal(enc.rutina[0].nota, 'Bajar en 3 segundos');
+  assert.equal(enc.rutina[1].carga, null);
   assert.equal(enc.confirmaciones.length, 2);
 
   // Pedirlo dos veces devuelve el mismo encuentro

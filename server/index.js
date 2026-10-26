@@ -32,10 +32,15 @@ const pool = mysql.createPool({
 });
 
 // ─── Init tablas ──────────────────────────────────────────────────────────────
+const CARGAS = ['liviano', 'moderado', 'pesado'];
+
 const COLUMNAS_NUEVAS = [
   ['cuerpro_encuentros', 'fecha_original', 'DATETIME DEFAULT NULL AFTER dia_id'],
   ['cuerpro_encuentros', 'cancelado', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER fecha_original'],
   ['cuerpro_confirmaciones', 'nota', 'VARCHAR(140) DEFAULT NULL AFTER asistio'],
+  ['cuerpro_plan_ejercicios', 'carga', "ENUM('liviano','moderado','pesado') DEFAULT NULL AFTER peso_sugerido"],
+  ['cuerpro_plan_ejercicios', 'descanso_seg', 'INT DEFAULT NULL AFTER carga'],
+  ['cuerpro_plan_ejercicios', 'nota', 'VARCHAR(200) DEFAULT NULL AFTER descanso_seg'],
 ];
 
 async function initTables() {
@@ -365,10 +370,54 @@ async function objetivoDelMes(usuarioId, grupoId, fechaHora) {
   return { nivel: nivel.nivel, objetivo: nivel.siguiente.nombre, necesitas, quedan, llegas, texto };
 }
 
+// Guarda una versión nueva del plan y deja la anterior inactiva, así no se pierde el historial.
+// También lo usa scripts/cargar-plan.js.
+async function guardarPlan(grupoId, plan) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query('UPDATE cuerpro_planes SET activo = 0 WHERE grupo_id = ?', [grupoId]);
+    const [p] = await conn.query(
+      'INSERT INTO cuerpro_planes (grupo_id, nombre) VALUES (?, ?)',
+      [grupoId, plan.nombre || 'Plan']
+    );
+    for (const [i, dia] of plan.dias.entries()) {
+      const [d] = await conn.query(
+        'INSERT INTO cuerpro_plan_dias (plan_id, orden, nombre) VALUES (?, ?, ?)',
+        [p.insertId, i + 1, dia.nombre || `Día ${i + 1}`]
+      );
+      for (const [j, ej] of (dia.ejercicios || []).entries()) {
+        const [pe] = await conn.query(
+          `INSERT INTO cuerpro_plan_ejercicios
+             (dia_id, ejercicio_id, orden, series, repeticiones, peso_sugerido, carga, descanso_seg, nota)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [d.insertId, ej.ejercicio_id, j + 1, ej.series || 3, String(ej.repeticiones || '10'), ej.peso_sugerido ?? null,
+           CARGAS.includes(ej.carga) ? ej.carga : null, Number(ej.descanso_seg) || null,
+           ej.nota ? String(ej.nota).trim().slice(0, 200) || null : null]
+        );
+        for (const [k, altId] of (ej.alternativas || []).entries()) {
+          await conn.query(
+            'INSERT IGNORE INTO cuerpro_alternativas (plan_ejercicio_id, ejercicio_id, orden) VALUES (?, ?, ?)',
+            [pe.insertId, altId, k + 1]
+          );
+        }
+      }
+    }
+    await conn.commit();
+    return p.insertId;
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
+  }
+}
+
 // Ejercicios de un día del plan, con alternativas y los cambios elegidos en el encuentro
 async function rutinaDelDia(diaId, encuentroId) {
   const [ejercicios] = await pool.query(
     `SELECT pe.id AS plan_ejercicio_id, pe.orden, pe.series, pe.repeticiones, pe.peso_sugerido,
+            pe.carga, pe.descanso_seg, pe.nota,
             e.id AS ejercicio_id, e.nombre, e.musculo_principal, e.equipo
      FROM cuerpro_plan_ejercicios pe
      JOIN cuerpro_ejercicios e ON e.id = pe.ejercicio_id
@@ -658,7 +707,8 @@ const acciones = {
     return { plan: { ...plan, dias } };
   },
 
-  // plan: {nombre, dias: [{nombre, ejercicios: [{ejercicio_id, series, repeticiones, peso_sugerido, alternativas: [ejercicio_id]}]}]}
+  // plan: {nombre, dias: [{nombre, ejercicios: [{ejercicio_id, series, repeticiones, peso_sugerido,
+  //        carga, descanso_seg, nota, alternativas: [ejercicio_id]}]}]}
   // Guarda una versión nueva y deja la anterior inactiva, así no se pierde el historial.
   async plan_guardar(req) {
     const usuario = await sesion(req);
@@ -667,41 +717,8 @@ const acciones = {
     const plan = typeof planParam === 'string' ? JSON.parse(planParam) : planParam;
     if (!plan.dias?.length) throw httpError(400, 'El plan necesita al menos un día');
 
-    const conn = await pool.getConnection();
-    try {
-      await conn.beginTransaction();
-      await conn.query('UPDATE cuerpro_planes SET activo = 0 WHERE grupo_id = ?', [grupoId]);
-      const [p] = await conn.query(
-        'INSERT INTO cuerpro_planes (grupo_id, nombre) VALUES (?, ?)',
-        [grupoId, plan.nombre || 'Plan']
-      );
-      for (const [i, dia] of plan.dias.entries()) {
-        const [d] = await conn.query(
-          'INSERT INTO cuerpro_plan_dias (plan_id, orden, nombre) VALUES (?, ?, ?)',
-          [p.insertId, i + 1, dia.nombre || `Día ${i + 1}`]
-        );
-        for (const [j, ej] of (dia.ejercicios || []).entries()) {
-          const [pe] = await conn.query(
-            `INSERT INTO cuerpro_plan_ejercicios (dia_id, ejercicio_id, orden, series, repeticiones, peso_sugerido)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [d.insertId, ej.ejercicio_id, j + 1, ej.series || 3, String(ej.repeticiones || '10'), ej.peso_sugerido ?? null]
-          );
-          for (const [k, altId] of (ej.alternativas || []).entries()) {
-            await conn.query(
-              'INSERT IGNORE INTO cuerpro_alternativas (plan_ejercicio_id, ejercicio_id, orden) VALUES (?, ?, ?)',
-              [pe.insertId, altId, k + 1]
-            );
-          }
-        }
-      }
-      await conn.commit();
-      return { plan_id: p.insertId, avisos: await avisosDelPlan(plan) };
-    } catch (e) {
-      await conn.rollback();
-      throw e;
-    } finally {
-      conn.release();
-    }
+    const planId = await guardarPlan(grupoId, plan);
+    return { plan_id: planId, avisos: await avisosDelPlan(plan) };
   },
 
   // ── Encuentros y asistencia ──
@@ -1092,4 +1109,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { app, pool, initTables };
+module.exports = { app, pool, initTables, guardarPlan };

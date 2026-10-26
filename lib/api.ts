@@ -50,6 +50,9 @@ export interface EjercicioRutina {
   series: number;
   repeticiones: string;
   peso_sugerido: string | null;
+  carga: Carga | null;
+  descanso_seg: number | null;
+  nota: string | null;
   alternativas: Alternativa[];
   cambio: (Alternativa & { elegido_por: string }) | null;
 }
@@ -80,6 +83,28 @@ export const EQUIPO: Record<string, string> = {
   peso_corporal: 'peso corporal',
   otro: 'otro',
 };
+
+export type Carga = 'liviano' | 'moderado' | 'pesado';
+export const CARGAS: Carga[] = ['liviano', 'moderado', 'pesado'];
+
+// 90 → "1'30''"
+export function textoPausa(seg: number) {
+  const m = Math.floor(seg / 60);
+  const s = seg % 60;
+  return m ? `${m}'${s ? `${String(s).padStart(2, '0')}''` : ''}` : `${s}''`;
+}
+
+// Un ejercicio "por tiempo" (entrada en calor de 6 min) no lleva series de repeticiones
+export const esPorTiempo = (repeticiones: string) => /min|'/i.test(repeticiones);
+
+// "4 × 10 · pesado · pausa 2'" para mostrar debajo del nombre
+export function resumenEjercicio(e: Pick<EjercicioRutina, 'series' | 'repeticiones' | 'peso_sugerido' | 'carga' | 'descanso_seg'>) {
+  const partes = [esPorTiempo(e.repeticiones) ? e.repeticiones : `${e.series} × ${e.repeticiones}`];
+  if (e.peso_sugerido) partes.push(`${Number(e.peso_sugerido)} kg`);
+  if (e.carga) partes.push(e.carga);
+  if (e.descanso_seg) partes.push(`pausa ${textoPausa(e.descanso_seg)}`);
+  return partes.join(' · ');
+}
 
 export interface Ejercicio {
   id: number;

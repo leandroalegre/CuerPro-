@@ -12,7 +12,7 @@ import { EjercicioNuevo, SelectorEjercicio } from '../../components/SelectorEjer
 import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useSesion } from '../../hooks/useSesion';
-import { api, Ejercicio, EQUIPO, Plan, Propuesta } from '../../lib/api';
+import { api, Carga, CARGAS, Ejercicio, EQUIPO, Plan, Propuesta, resumenEjercicio, textoPausa } from '../../lib/api';
 
 interface EjEdit {
   key: string;
@@ -20,8 +20,13 @@ interface EjEdit {
   series: string;
   repeticiones: string;
   peso: string;
+  carga: Carga | null;
+  descanso: number | null;
+  nota: string;
   alternativas: Ejercicio[];
 }
+
+const PAUSAS = [60, 90, 120, 180];
 interface DiaEdit { key: string; nombre: string; ejercicios: EjEdit[] }
 
 type Selector = { modo: 'ejercicio'; dia: number } | { modo: 'alternativa'; dia: number; ej: number } | null;
@@ -89,6 +94,9 @@ export default function PlanScreen() {
               series: String(e.series),
               repeticiones: e.repeticiones,
               peso: e.peso_sugerido ? String(Number(e.peso_sugerido)) : '',
+              carga: e.carga,
+              descanso: e.descanso_seg,
+              nota: e.nota ?? '',
               alternativas: e.alternativas.map(a => porId.get(a.ejercicio_id)).filter(Boolean) as Ejercicio[],
             })),
         }))
@@ -130,7 +138,7 @@ export default function PlanScreen() {
     if (selector.modo === 'ejercicio') {
       const dia = dias[selector.dia];
       cambiarDia(selector.dia, {
-        ejercicios: [...dia.ejercicios, { key: nuevaKey(), ejercicio: e, series: '3', repeticiones: '10', peso: '', alternativas: [] }],
+        ejercicios: [...dia.ejercicios, { key: nuevaKey(), ejercicio: e, series: '3', repeticiones: '10', peso: '', carga: null, descanso: null, nota: '', alternativas: [] }],
       });
     } else {
       const ej = dias[selector.dia].ejercicios[selector.ej];
@@ -155,6 +163,9 @@ export default function PlanScreen() {
               series: Number(e.series) || 3,
               repeticiones: e.repeticiones.trim() || '10',
               peso_sugerido: e.peso ? Number(e.peso.replace(',', '.')) : null,
+              carga: e.carga,
+              descanso_seg: e.descanso,
+              nota: e.nota.trim(),
               alternativas: e.alternativas.map(a => a.id),
             })),
           })),
@@ -242,6 +253,25 @@ export default function PlanScreen() {
                     <Campo style={styles.sinMargen} value={e.peso} onChangeText={t => cambiarEj(i, k, { peso: t })} keyboardType="decimal-pad" />
                   </View>
                 </View>
+                <Text style={styles.mini}>Carga</Text>
+                <View style={styles.alternativas}>
+                  {CARGAS.map(c => (
+                    <Opcion key={c} texto={c} activa={e.carga === c} onPress={() => cambiarEj(i, k, { carga: e.carga === c ? null : c })} />
+                  ))}
+                </View>
+                <Text style={[styles.mini, { marginTop: Spacing.sm }]}>Pausa entre series</Text>
+                <View style={styles.alternativas}>
+                  {PAUSAS.map(p => (
+                    <Opcion key={p} texto={textoPausa(p)} activa={e.descanso === p} onPress={() => cambiarEj(i, k, { descanso: e.descanso === p ? null : p })} />
+                  ))}
+                </View>
+                <Campo
+                  style={{ marginTop: Spacing.sm }}
+                  value={e.nota}
+                  onChangeText={t => cambiarEj(i, k, { nota: t })}
+                  placeholder="Nota para el grupo (ej: isometría 1'' arriba)"
+                  maxLength={200}
+                />
                 <Text style={styles.mini}>Alternativas si la máquina está ocupada</Text>
                 <View style={styles.alternativas}>
                   {e.alternativas.map((a, n) => (
@@ -317,9 +347,8 @@ export default function PlanScreen() {
               {d.ejercicios.map(e => (
                 <View key={e.plan_ejercicio_id} style={styles.ejVista}>
                   <Text style={styles.ejNombre}>{e.nombre}</Text>
-                  <Text style={styles.mini}>
-                    {`${e.series} × ${e.repeticiones}${e.peso_sugerido ? ` · ${Number(e.peso_sugerido)} kg` : ''} · ${EQUIPO[e.equipo] ?? e.equipo}`}
-                  </Text>
+                  <Text style={styles.mini}>{`${resumenEjercicio(e)} · ${EQUIPO[e.equipo] ?? e.equipo}`}</Text>
+                  {!!e.nota && <Text style={styles.nota}>{e.nota}</Text>}
                   {e.alternativas.length > 0 && (
                     <Text style={styles.mini}>{`Si está ocupada: ${e.alternativas.map(a => a.nombre).join(', ')}`}</Text>
                   )}
@@ -400,7 +429,17 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.bgMuted,
   },
   altAgregar: { backgroundColor: Colors.accentGlow },
+  altActiva: { backgroundColor: Colors.accent },
+  nota: { ...Typography.caption, color: Colors.accent, fontStyle: 'italic' },
   altTexto: { ...Typography.caption, color: Colors.textPrimary },
   filaBotones: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md },
   propuesta: { borderTopWidth: 1, borderTopColor: Colors.border, paddingVertical: Spacing.sm, marginTop: Spacing.sm },
 });
+
+function Opcion({ texto, activa, onPress }: { texto: string; activa: boolean; onPress: () => void }) {
+  return (
+    <TouchableOpacity style={[styles.alt, activa && styles.altActiva]} onPress={onPress}>
+      <Text style={[styles.altTexto, activa && { color: Colors.textInverse }]}>{texto}</Text>
+    </TouchableOpacity>
+  );
+}
