@@ -6,9 +6,9 @@
  */
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Card, Etiqueta, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
-import { Colors, NivelColor, Radius, Spacing, Typography } from '../../constants/theme';
+import { Colors, NivelColor, NivelMedalla, Radius, Spacing, Typography } from '../../constants/theme';
 import { useSesion } from '../../hooks/useSesion';
 import { api, Nivel } from '../../lib/api';
 
@@ -60,9 +60,14 @@ export default function ProgresoScreen() {
       refreshControl={<RefreshControl refreshing={cargando} onRefresh={cargar} tintColor={Colors.accent} />}
     >
       <Card style={{ borderColor: color }}>
-        <Etiqueta>{`Temporada ${nivel.temporada}`}</Etiqueta>
-        <Text style={[styles.nivel, { color }]}>{nivel.nivel}</Text>
-        <Texto>{`${nivel.puntos} puntos`}</Texto>
+        <View style={styles.cabecera}>
+          <Image source={NivelMedalla[nivel.nivel]} style={styles.medalla} />
+          <View style={{ flex: 1 }}>
+            <Etiqueta>{`Temporada ${nivel.temporada}`}</Etiqueta>
+            <Text style={[styles.nivel, { color }]}>{nivel.nivel}</Text>
+            <Texto>{`${nivel.puntos} puntos`}</Texto>
+          </View>
+        </View>
         <View style={styles.barra}>
           <View style={[styles.relleno, { width: `${Math.min(avance, 1) * 100}%`, backgroundColor: color }]} />
         </View>
@@ -127,6 +132,8 @@ export default function ProgresoScreen() {
 }
 
 const styles = StyleSheet.create({
+  cabecera: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  medalla: { width: 84, height: 84 },
   nivel: { fontSize: 34, fontWeight: '800', marginVertical: Spacing.xs },
   barra: { height: 8, borderRadius: Radius.full, backgroundColor: Colors.bgMuted, marginVertical: Spacing.sm, overflow: 'hidden' },
   relleno: { height: 8, borderRadius: Radius.full },

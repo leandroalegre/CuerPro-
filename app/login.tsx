@@ -4,7 +4,7 @@
  * - Crear cuenta nueva
  */
 import { useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { Alert, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Boton, Campo, Card } from '../components/ui';
 import { APP_VERSION, DESARROLLADOR } from '../constants/app';
@@ -38,7 +38,7 @@ export default function LoginScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.contenido} keyboardShouldPersistTaps="handled">
-          <Text style={styles.logo}>CuerPro</Text>
+          <Image source={require('../assets/images/logo.png')} style={styles.logo} resizeMode="contain" accessibilityLabel="CuerPro" />
           <Text style={styles.subtitulo}>Entrená con tu grupo, seguí tu progreso.</Text>
 
           <Card>
@@ -76,7 +76,7 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   contenido: { flexGrow: 1, justifyContent: 'center', padding: Spacing.lg },
-  logo: { fontSize: 40, fontWeight: '800', color: Colors.accent, textAlign: 'center' },
+  logo: { width: 260, height: 93, alignSelf: 'center' },
   subtitulo: { ...Typography.body, color: Colors.textSecondary, textAlign: 'center', marginBottom: Spacing.lg },
   cambiar: { ...Typography.body, color: Colors.accent, textAlign: 'center', marginTop: Spacing.sm },
   creditos: { ...Typography.caption, color: Colors.textMuted, textAlign: 'center', marginTop: Spacing.xl },
