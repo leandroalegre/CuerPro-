@@ -161,3 +161,65 @@ test('flujo completo de un grupo', { skip: !enabled && 'Definí CUERPRO_TEST_DB=
   assert.equal(yo.grupos[0].rol, 'miembro');
   assert.equal(yo.nivel.por_grupo[0].grupo_id, grupoId);
 });
+
+test('horarios distintos por día, mover, cancelar y agregar encuentros', { skip: !enabled && 'Definí CUERPRO_TEST_DB=1 y DB_NAME' }, async () => {
+  const coach = await api('registro', { nombre: 'Coach', email: 'coach2@test.ar', password: 'secreto1' });
+  const amigo = await api('registro', { nombre: 'Amigo', email: 'amigo2@test.ar', password: 'secreto2' });
+  const grupo = await api('grupo_crear', { nombre: 'Mañaneros' }, coach.token);
+  const grupoId = grupo.grupo.id;
+  await api('grupo_unirse', { codigo: grupo.grupo.codigo_invitacion }, amigo.token);
+
+  const pad = n => String(n).padStart(2, '0');
+  const sql = f => `${f.getFullYear()}-${pad(f.getMonth() + 1)}-${pad(f.getDate())} ${pad(f.getHours())}:${pad(f.getMinutes())}`;
+  const enDias = (d, hh, mm) => { const f = new Date(); f.setDate(f.getDate() + d); f.setHours(hh, mm, 0, 0); return f; };
+
+  // Mañana a las 08:00 y pasado mañana a las 20:30
+  const manana = enDias(1, 8, 0);
+  const pasado = enDias(2, 20, 30);
+  const r = await api('horarios_guardar', {
+    grupo_id: grupoId,
+    horarios: [{ dia_semana: manana.getDay(), hora: '08:00' }, { dia_semana: pasado.getDay(), hora: '20:30' }],
+  }, coach.token);
+  assert.equal(r.ok, true, r.error);
+
+  const prox = async () => (await api('encuentro_proximo', { grupo_id: grupoId }, amigo.token)).encuentro;
+  const e1 = await prox();
+  assert.equal(e1.fecha_hora, `${sql(manana)}:00`);
+
+  // Solo el coach mueve; mañana pasa a las 10:15 y sigue siendo el próximo
+  assert.equal((await api('encuentro_mover', { encuentro_id: e1.id, fecha_hora: sql(enDias(1, 10, 15)) }, amigo.token)).ok, false);
+  const mov = await api('encuentro_mover', { encuentro_id: e1.id, fecha_hora: sql(enDias(1, 10, 15)) }, coach.token);
+  assert.equal(mov.ok, true, mov.error);
+  const e1b = await prox();
+  assert.equal(e1b.id, e1.id);
+  assert.equal(e1b.fecha_hora, `${sql(enDias(1, 10, 15))}:00`);
+  assert.equal(e1b.fecha_original, `${sql(manana)}:00`);
+
+  // Cancelado: el próximo es el de pasado mañana a las 20:30, y el horario fijo de mañana no vuelve
+  assert.equal((await api('encuentro_cancelar', { encuentro_id: e1.id }, coach.token)).ok, true);
+  const e2 = await prox();
+  assert.equal(e2.fecha_hora, `${sql(pasado)}:00`);
+
+  // Un extra antes de ese pasa a ser el próximo; no se puede duplicar
+  const extra = await api('encuentro_agregar', { grupo_id: grupoId, fecha_hora: sql(enDias(1, 18, 0)) }, coach.token);
+  assert.equal(extra.ok, true, extra.error);
+  assert.equal((await prox()).id, extra.id);
+  assert.equal((await api('encuentro_agregar', { grupo_id: grupoId, fecha_hora: sql(enDias(1, 18, 0)) }, coach.token)).ok, false);
+  assert.equal((await api('encuentro_agregar', { grupo_id: grupoId, fecha_hora: '2020-01-01 10:00' }, coach.token)).ok, false);
+
+  // Confirmar con una nota; volver a confirmar sin nota la conserva, con nota vacía la borra
+  const ex = (await prox()).id;
+  assert.equal((await api('confirmar', { encuentro_id: ex, va: 1, nota: 'Llego 15 tarde' }, amigo.token)).ok, true);
+  const nota = async () => (await prox()).confirmaciones.find(c => c.usuario_id === amigo.usuario.id).nota;
+  assert.equal(await nota(), 'Llego 15 tarde');
+  await api('confirmar', { encuentro_id: ex, va: 1 }, amigo.token);
+  assert.equal(await nota(), 'Llego 15 tarde');
+  await api('confirmar', { encuentro_id: ex, va: 1, nota: '' }, amigo.token);
+  assert.equal(await nota(), null);
+
+  // El coach crea un ejercicio propio del grupo
+  const ej = await api('ejercicio_crear', { grupo_id: grupoId, nombre: 'Remo en TRX', musculo_principal: 'espalda', equipo: 'otro' }, coach.token);
+  assert.equal(ej.ok, true, ej.error);
+  const cat = await api('ejercicios', { grupo_id: grupoId }, amigo.token);
+  assert.ok(cat.ejercicios.some(e => e.id === ej.id && e.grupo_id === grupoId));
+});

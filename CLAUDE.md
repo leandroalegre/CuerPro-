@@ -25,7 +25,10 @@ App Expo → https://cuerpro.sistemascloud.ar/api.php
 - Niveles por mes (temporada `YYYY-MM`): Bronce 0, Plata 100, Oro 200, Platino 300, Diamante 380; nivel = máx(nivel por puntos del mes, nivel del mes anterior − 1). Nivel general, suma todos los grupos.
 - Aviso de músculo abandonado: 5 días por defecto, configurable por grupo.
 - Si decís "no voy", la API devuelve `objetivo`: cuántas asistencias te faltan para el próximo nivel y cuántos entrenamientos quedan en el mes.
-- Encuentros: se generan del horario fijo (`cuerpro_horarios`) al pedir `encuentro_proximo`; el día del plan rota en orden. Hora en `TZ=America/Argentina/Cordoba`.
+- Encuentros: se generan del horario fijo (`cuerpro_horarios`, cada día con su hora) al pedir `encuentro_proximo`; el día del plan rota en orden. Hora en `TZ=America/Argentina/Cordoba`.
+- El coach puede mover (`encuentro_mover`, guarda `fecha_original`), cancelar (`encuentro_cancelar`) o agregar (`encuentro_agregar`) un encuentro puntual sin tocar el horario fijo; se avisa al grupo por push.
+- Al confirmar se puede dejar una `nota` ("llego 15 tarde"); a los coaches les llega por push.
+- Columnas nuevas en tablas que ya existen en producción: agregarlas también a `COLUMNAS_NUEVAS` en `server/index.js`.
 
 ## Pruebas
 - `cd server && CUERPRO_TEST_DB=1 DB_NAME=... npm test`: flujo completo contra MySQL (borra las tablas `cuerpro_*`).

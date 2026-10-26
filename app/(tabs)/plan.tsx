@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Alert, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SelectorEjercicio } from '../../components/SelectorEjercicio';
+import { EjercicioNuevo, SelectorEjercicio } from '../../components/SelectorEjercicio';
 import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useSesion } from '../../hooks/useSesion';
@@ -116,6 +116,14 @@ export default function PlanScreen() {
 
   const quitarEj = (i: number, k: number) =>
     setDias(ds => ds.map((d, j) => (j === i ? { ...d, ejercicios: d.ejercicios.filter((_, m) => m !== k) } : d)));
+
+  // El coach carga un ejercicio que no está en el catálogo; queda para el grupo
+  const crearEjercicio = async (datos: EjercicioNuevo): Promise<Ejercicio> => {
+    const { id } = await api<{ id: number }>('ejercicio_crear', { grupo_id: grupo!.id, ...datos }, token);
+    const nuevo: Ejercicio = { id, grupo_id: grupo!.id, musculos_secundarios: '', movimiento: '', ...datos };
+    setCatalogo(c => [...c, nuevo]);
+    return nuevo;
+  };
 
   const alElegir = (e: Ejercicio) => {
     if (!selector) return;
@@ -276,6 +284,7 @@ export default function PlanScreen() {
           sugerir={selEjercicio?.ejercicio ?? null}
           onElegir={alElegir}
           onCerrar={() => setSelector(null)}
+          onCrear={crearEjercicio}
         />
       </ScrollView>
     );

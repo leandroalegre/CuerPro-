@@ -25,16 +25,15 @@ export default function GruposScreen() {
   const [codigo, setCodigo] = useState('');
   const [nombreNuevo, setNombreNuevo] = useState('');
   const [detalle, setDetalle] = useState<Detalle | null>(null);
-  const [dias, setDias] = useState<number[]>([]);
-  const [hora, setHora] = useState('19:00');
+  // Día de la semana → hora de ese día (cada día puede tener la suya)
+  const [horas, setHoras] = useState<Record<number, string>>({});
 
   const cargarDetalle = useCallback(async () => {
     if (!token || !grupo) return setDetalle(null);
     try {
       const data = await api<Detalle>('grupo_detalle', { grupo_id: grupo.id }, token);
       setDetalle(data);
-      setDias(data.horarios.map(h => h.dia_semana));
-      if (data.horarios[0]) setHora(data.horarios[0].hora);
+      setHoras(Object.fromEntries(data.horarios.map(h => [h.dia_semana, String(h.hora).slice(0, 5)])));
     } catch {}
   }, [token, grupo]);
 
@@ -71,11 +70,13 @@ export default function GruposScreen() {
 
   const guardarHorarios = async () => {
     if (!grupo) return;
-    if (!/^\d{1,2}:\d{2}$/.test(hora)) return Alert.alert('Hora inválida', 'Usá el formato 19:00');
+    const lista = Object.entries(horas).map(([d, hora]) => ({ dia_semana: Number(d), hora: hora.trim() }));
+    const mala = lista.find(h => !/^\d{1,2}:\d{2}$/.test(h.hora));
+    if (mala) return Alert.alert('Hora inválida', `Revisá la hora del ${DIAS[mala.dia_semana]}. Usá el formato 19:00`);
     try {
       await api('horarios_guardar', {
         grupo_id: grupo.id,
-        horarios: dias.sort().map(d => ({ dia_semana: d, hora })),
+        horarios: lista.sort((a, b) => a.dia_semana - b.dia_semana),
       }, token);
       Alert.alert('Horarios guardados');
       cargarDetalle();
@@ -118,25 +119,38 @@ export default function GruposScreen() {
               <>
                 <View style={styles.dias}>
                   {DIAS.map((d, i) => {
-                    const activo = dias.includes(i);
+                    const activo = i in horas;
+                    const alternar = () => {
+                      const { [i]: _, ...resto } = horas;
+                      // Un día nuevo arranca con la hora del último día cargado
+                      setHoras(activo ? resto : { ...horas, [i]: Object.values(horas).pop() ?? '19:00' });
+                    };
                     return (
-                      <TouchableOpacity
-                        key={d}
-                        style={[styles.dia, activo && styles.diaActivo]}
-                        onPress={() => setDias(activo ? dias.filter(x => x !== i) : [...dias, i])}
-                      >
+                      <TouchableOpacity key={d} style={[styles.dia, activo && styles.diaActivo]} onPress={alternar}>
                         <Text style={[styles.diaTexto, activo && { color: Colors.textInverse }]}>{d}</Text>
                       </TouchableOpacity>
                     );
                   })}
                 </View>
-                <Campo value={hora} onChangeText={setHora} placeholder="19:00" keyboardType="numbers-and-punctuation" />
+                {Object.keys(horas).map(Number).sort((a, b) => a - b).map(d => (
+                  <View key={d} style={styles.horaDia}>
+                    <Text style={[styles.textoFila, { width: 48 }]}>{DIAS[d]}</Text>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Campo
+                        value={horas[d]}
+                        onChangeText={hora => setHoras({ ...horas, [d]: hora })}
+                        placeholder="19:00"
+                        keyboardType="numbers-and-punctuation"
+                      />
+                    </View>
+                  </View>
+                ))}
                 <Boton titulo="Guardar horarios" tipo="secundario" onPress={guardarHorarios} />
               </>
             ) : (
               <Texto>
                 {detalle.horarios.length
-                  ? detalle.horarios.map(h => `${DIAS[h.dia_semana]} ${h.hora}`).join(' · ')
+                  ? detalle.horarios.map(h => `${DIAS[h.dia_semana]} ${String(h.hora).slice(0, 5)}`).join(' · ')
                   : 'Sin horarios todavía'}
               </Texto>
             )}
@@ -181,6 +195,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.bgMuted,
   },
   diaActivo: { backgroundColor: Colors.accent },
+  horaDia: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   diaTexto: { ...Typography.label, color: Colors.textPrimary },
   creditos: { ...Typography.caption, color: Colors.textMuted, textAlign: 'center', marginTop: Spacing.lg, lineHeight: 18 },
 });

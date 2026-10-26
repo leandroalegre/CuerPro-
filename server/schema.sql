@@ -114,6 +114,9 @@ CREATE TABLE IF NOT EXISTS cuerpro_encuentros (
   grupo_id   INT NOT NULL,
   fecha_hora DATETIME NOT NULL,
   dia_id     INT DEFAULT NULL,
+  -- Si el coach lo movió: la fecha del horario fijo que reemplaza
+  fecha_original DATETIME DEFAULT NULL,
+  cancelado  TINYINT(1) NOT NULL DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uniq_grupo_fecha (grupo_id, fecha_hora),
   FOREIGN KEY (grupo_id) REFERENCES cuerpro_grupos(id)    ON DELETE CASCADE,
@@ -140,6 +143,7 @@ CREATE TABLE IF NOT EXISTS cuerpro_confirmaciones (
   usuario_id   INT NOT NULL,
   va           TINYINT(1) DEFAULT NULL,
   asistio      TINYINT(1) DEFAULT NULL,
+  nota         VARCHAR(140) DEFAULT NULL,  -- "llego 15 tarde", etc.
   updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (encuentro_id, usuario_id),
   FOREIGN KEY (encuentro_id) REFERENCES cuerpro_encuentros(id) ON DELETE CASCADE,

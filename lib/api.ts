@@ -53,11 +53,12 @@ export interface EjercicioRutina {
   alternativas: Alternativa[];
   cambio: (Alternativa & { elegido_por: string }) | null;
 }
-export interface Confirmacion { usuario_id: number; nombre: string; va: number | null; asistio: number | null }
+export interface Confirmacion { usuario_id: number; nombre: string; va: number | null; asistio: number | null; nota: string | null }
 export interface Encuentro {
   id: number;
   grupo_id: number;
   fecha_hora: string;
+  fecha_original: string | null; // si el coach lo movió
   dia: { id: number; nombre: string } | null;
   rutina: EjercicioRutina[];
   confirmaciones: Confirmacion[];

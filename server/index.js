@@ -32,6 +32,12 @@ const pool = mysql.createPool({
 });
 
 // ─── Init tablas ──────────────────────────────────────────────────────────────
+const COLUMNAS_NUEVAS = [
+  ['cuerpro_encuentros', 'fecha_original', 'DATETIME DEFAULT NULL AFTER dia_id'],
+  ['cuerpro_encuentros', 'cancelado', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER fecha_original'],
+  ['cuerpro_confirmaciones', 'nota', 'VARCHAR(140) DEFAULT NULL AFTER asistio'],
+];
+
 async function initTables() {
   const sql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8')
     .split('\n')
@@ -42,6 +48,16 @@ async function initTables() {
   const conn = await pool.getConnection();
   try {
     for (const statement of statements) await conn.query(statement);
+
+    // Columnas agregadas después de crear las tablas en producción
+    for (const [tabla, columna, definicion] of COLUMNAS_NUEVAS) {
+      const [existe] = await conn.query(
+        `SELECT 1 FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+        [tabla, columna]
+      );
+      if (!existe.length) await conn.query(`ALTER TABLE ${tabla} ADD COLUMN ${columna} ${definicion}`);
+    }
 
     // Catálogo precargado (solo la primera vez)
     const [[{ total }]] = await conn.query(
@@ -223,58 +239,100 @@ async function nivelDe(usuarioId) {
   };
 }
 
-// Próximo encuentro según los horarios fijos del grupo; lo crea si todavía no existe
-async function proximoEncuentro(grupoId) {
-  const [horarios] = await pool.query(
-    'SELECT dia_semana, hora FROM cuerpro_horarios WHERE grupo_id = ?',
-    [grupoId]
-  );
-  if (!horarios.length) return null;
+const pad2 = n => String(n).padStart(2, '0');
+const fechaSql = f =>
+  `${f.getFullYear()}-${pad2(f.getMonth() + 1)}-${pad2(f.getDate())} ${pad2(f.getHours())}:${pad2(f.getMinutes())}:00`;
 
-  const ahora = new Date();
-  // Un encuentro sigue siendo "el próximo" hasta 2 horas después de empezar
-  const desde = new Date(ahora.getTime() - 2 * 60 * 60 * 1000);
-  let mejor = null;
-  for (const h of horarios) {
-    const [hh, mm] = String(h.hora).split(':').map(Number);
-    for (let d = 0; d <= 7; d++) {
-      const f = new Date(desde);
-      f.setDate(f.getDate() + d);
-      f.setHours(hh, mm, 0, 0);
-      if (f.getDay() === Number(h.dia_semana) && f >= desde) {
-        if (!mejor || f < mejor) mejor = f;
-        break;
-      }
-    }
-  }
-  const pad = n => String(n).padStart(2, '0');
-  const fechaHora = `${mejor.getFullYear()}-${pad(mejor.getMonth() + 1)}-${pad(mejor.getDate())} ` +
-                    `${pad(mejor.getHours())}:${pad(mejor.getMinutes())}:00`;
-
-  // Le toca el siguiente día del plan, en rotación
+// Le toca el siguiente día del plan, en rotación según los encuentros anteriores
+async function diaDelPlan(grupoId, fechaHora) {
   const [[plan]] = await pool.query(
     'SELECT id FROM cuerpro_planes WHERE grupo_id = ? AND activo = 1 ORDER BY id DESC LIMIT 1',
     [grupoId]
   );
-  let diaId = null;
-  if (plan) {
-    const [dias] = await pool.query('SELECT id FROM cuerpro_plan_dias WHERE plan_id = ? ORDER BY orden', [plan.id]);
-    const [[{ previos }]] = await pool.query(
-      'SELECT COUNT(*) AS previos FROM cuerpro_encuentros WHERE grupo_id = ? AND fecha_hora < ?',
-      [grupoId, fechaHora]
-    );
-    if (dias.length) diaId = dias[previos % dias.length].id;
+  if (!plan) return null;
+  const [dias] = await pool.query('SELECT id FROM cuerpro_plan_dias WHERE plan_id = ? ORDER BY orden', [plan.id]);
+  if (!dias.length) return null;
+  const [[{ previos }]] = await pool.query(
+    'SELECT COUNT(*) AS previos FROM cuerpro_encuentros WHERE grupo_id = ? AND fecha_hora < ? AND cancelado = 0',
+    [grupoId, fechaHora]
+  );
+  return dias[previos % dias.length].id;
+}
+
+// Próximo encuentro: el más cercano entre los horarios fijos del grupo y los
+// encuentros que el coach movió o agregó. Un horario fijo que el coach movió
+// o canceló se saltea. Si el próximo sale del horario fijo, se crea.
+async function proximoEncuentro(grupoId) {
+  const ahora = new Date();
+  // Un encuentro sigue siendo "el próximo" hasta 2 horas después de empezar
+  const desde = new Date(ahora.getTime() - 2 * 60 * 60 * 1000);
+  const desdeSql = fechaSql(desde);
+
+  const [[agendado]] = await pool.query(
+    `SELECT * FROM cuerpro_encuentros
+     WHERE grupo_id = ? AND fecha_hora >= ? AND cancelado = 0
+     ORDER BY fecha_hora LIMIT 1`,
+    [grupoId, desdeSql]
+  );
+
+  const [horarios] = await pool.query('SELECT dia_semana, hora FROM cuerpro_horarios WHERE grupo_id = ?', [grupoId]);
+  const [salteados] = await pool.query(
+    `SELECT fecha_original AS f FROM cuerpro_encuentros WHERE grupo_id = ? AND fecha_original >= ?
+     UNION SELECT fecha_hora AS f FROM cuerpro_encuentros WHERE grupo_id = ? AND cancelado = 1 AND fecha_hora >= ?`,
+    [grupoId, desdeSql, grupoId, desdeSql]
+  );
+  const saltear = new Set(salteados.map(r => String(r.f).slice(0, 19)));
+
+  // Horario fijo más cercano que no se haya movido ni cancelado (mira 8 semanas)
+  let fijo = null;
+  for (let d = 0; d <= 56 && horarios.length; d++) {
+    for (const h of horarios) {
+      const [hh, mm] = String(h.hora).split(':').map(Number);
+      const f = new Date(desde);
+      f.setDate(f.getDate() + d);
+      f.setHours(hh, mm, 0, 0);
+      if (f.getDay() !== Number(h.dia_semana) || f < desde || saltear.has(fechaSql(f))) continue;
+      if (!fijo || f < fijo) fijo = f;
+    }
+    if (fijo) break;
   }
+
+  if (!fijo) return agendado || null;
+  const fechaHora = fechaSql(fijo);
+  if (agendado && String(agendado.fecha_hora) <= fechaHora) return agendado;
 
   await pool.query(
     'INSERT IGNORE INTO cuerpro_encuentros (grupo_id, fecha_hora, dia_id) VALUES (?, ?, ?)',
-    [grupoId, fechaHora, diaId]
+    [grupoId, fechaHora, await diaDelPlan(grupoId, fechaHora)]
   );
   const [[encuentro]] = await pool.query(
     'SELECT * FROM cuerpro_encuentros WHERE grupo_id = ? AND fecha_hora = ?',
     [grupoId, fechaHora]
   );
   return encuentro;
+}
+
+// "2026-10-28 19:30" → valida y devuelve "2026-10-28 19:30:00"
+function fechaHoraParam(valor) {
+  const m = String(valor).trim().match(/^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}):(\d{2})/);
+  if (!m) throw httpError(400, 'Fecha inválida, usá AAAA-MM-DD HH:MM');
+  const fecha = `${m[1]} ${pad2(m[2])}:${m[3]}:00`;
+  if (new Date(fecha.replace(' ', 'T')) < new Date()) throw httpError(400, 'Esa fecha ya pasó');
+  return fecha;
+}
+
+const fechaLinda = fechaHora => {
+  const f = new Date(String(fechaHora).replace(' ', 'T'));
+  const dias = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  return `${dias[f.getDay()]} ${f.getDate()}/${f.getMonth() + 1} a las ${pad2(f.getHours())}:${pad2(f.getMinutes())}`;
+};
+
+async function avisarAlGrupo(grupoId, menosUsuarioId, title, body, encuentroId) {
+  const [miembros] = await pool.query(
+    'SELECT usuario_id FROM cuerpro_miembros WHERE grupo_id = ? AND usuario_id <> ?',
+    [grupoId, menosUsuarioId]
+  );
+  notificar(miembros.map(m => m.usuario_id), { title, body, data: { tipo: 'encuentro', encuentro_id: encuentroId } });
 }
 
 // Cuántos entrenamientos del grupo quedan en el mes después de `desde`
@@ -654,7 +712,7 @@ const acciones = {
     const encuentro = await proximoEncuentro(grupoId);
     if (!encuentro) return { encuentro: null };
     const [confirmaciones] = await pool.query(
-      `SELECT u.id AS usuario_id, u.nombre, c.va, c.asistio
+      `SELECT u.id AS usuario_id, u.nombre, c.va, c.asistio, c.nota
        FROM cuerpro_miembros m
        JOIN cuerpro_usuarios u ON u.id = m.usuario_id
        LEFT JOIN cuerpro_confirmaciones c ON c.usuario_id = u.id AND c.encuentro_id = ?
@@ -670,6 +728,68 @@ const acciones = {
     return { encuentro: { ...encuentro, dia, rutina, confirmaciones }, objetivo };
   },
 
+  // El coach mueve un encuentro puntual; el horario fijo no cambia
+  async encuentro_mover(req) {
+    const usuario = await sesion(req);
+    const [encuentroId, nueva] = requireParams(req, 'encuentro_id', 'fecha_hora');
+    const [[encuentro]] = await pool.query('SELECT * FROM cuerpro_encuentros WHERE id = ?', [encuentroId]);
+    if (!encuentro) throw httpError(404, 'Encuentro no encontrado');
+    await coach(encuentro.grupo_id, usuario.id);
+    const fechaHora = fechaHoraParam(nueva);
+    try {
+      await pool.query(
+        `UPDATE cuerpro_encuentros
+         SET fecha_original = COALESCE(fecha_original, fecha_hora), fecha_hora = ?, cancelado = 0
+         WHERE id = ?`,
+        [fechaHora, encuentroId]
+      );
+    } catch (e) {
+      if (e.code === 'ER_DUP_ENTRY') throw httpError(409, 'Ya hay un entrenamiento en ese día y horario');
+      throw e;
+    }
+    avisarAlGrupo(encuentro.grupo_id, usuario.id, 'Cambio de horario',
+      `El entrenamiento del ${fechaLinda(encuentro.fecha_hora)} pasa al ${fechaLinda(fechaHora)}`, encuentro.id);
+    return {};
+  },
+
+  async encuentro_cancelar(req) {
+    const usuario = await sesion(req);
+    const [encuentroId] = requireParams(req, 'encuentro_id');
+    const [[encuentro]] = await pool.query('SELECT * FROM cuerpro_encuentros WHERE id = ?', [encuentroId]);
+    if (!encuentro) throw httpError(404, 'Encuentro no encontrado');
+    await coach(encuentro.grupo_id, usuario.id);
+    await pool.query('UPDATE cuerpro_encuentros SET cancelado = 1 WHERE id = ?', [encuentroId]);
+    avisarAlGrupo(encuentro.grupo_id, usuario.id, 'Entrenamiento cancelado',
+      `Se cancela el entrenamiento del ${fechaLinda(encuentro.fecha_hora)}`, encuentro.id);
+    return {};
+  },
+
+  // Entrenamiento extra, fuera del horario fijo
+  async encuentro_agregar(req) {
+    const usuario = await sesion(req);
+    const [grupoId, nueva] = requireParams(req, 'grupo_id', 'fecha_hora');
+    await coach(grupoId, usuario.id);
+    const fechaHora = fechaHoraParam(nueva);
+    const [[existe]] = await pool.query(
+      'SELECT id, cancelado FROM cuerpro_encuentros WHERE grupo_id = ? AND fecha_hora = ?',
+      [grupoId, fechaHora]
+    );
+    if (existe && !existe.cancelado) throw httpError(409, 'Ya hay un entrenamiento en ese día y horario');
+    let id = existe?.id;
+    if (existe) {
+      await pool.query('UPDATE cuerpro_encuentros SET cancelado = 0 WHERE id = ?', [id]);
+    } else {
+      const [r] = await pool.query(
+        'INSERT INTO cuerpro_encuentros (grupo_id, fecha_hora, dia_id) VALUES (?, ?, ?)',
+        [grupoId, fechaHora, await diaDelPlan(grupoId, fechaHora)]
+      );
+      id = r.insertId;
+    }
+    avisarAlGrupo(grupoId, usuario.id, 'Entrenamiento extra', `Nuevo entrenamiento el ${fechaLinda(fechaHora)}`, id);
+    return { id };
+  },
+
+  // va: 1/0. nota (opcional): "llego 15 tarde"; si no viene, se mantiene la que había
   async confirmar(req) {
     const usuario = await sesion(req);
     const [encuentroId, va] = requireParams(req, 'encuentro_id', 'va');
@@ -677,23 +797,33 @@ const acciones = {
     if (!encuentro) throw httpError(404, 'Encuentro no encontrado');
     await miembro(encuentro.grupo_id, usuario.id);
     const voy = va === true || va === '1' || va === 1 ? 1 : 0;
-    await pool.query(
-      `INSERT INTO cuerpro_confirmaciones (encuentro_id, usuario_id, va) VALUES (?, ?, ?)
-       ON DUPLICATE KEY UPDATE va = VALUES(va)`,
-      [encuentroId, usuario.id, voy]
+    const notaParam = getParam(req, 'nota');
+    const nota = notaParam == null ? null : String(notaParam).trim().slice(0, 140);
+    const [[antes]] = await pool.query(
+      'SELECT va, nota FROM cuerpro_confirmaciones WHERE encuentro_id = ? AND usuario_id = ?',
+      [encuentroId, usuario.id]
     );
-    if (!voy) {
+    await pool.query(
+      `INSERT INTO cuerpro_confirmaciones (encuentro_id, usuario_id, va, nota) VALUES (?, ?, ?, NULLIF(?, ''))
+       ON DUPLICATE KEY UPDATE va = VALUES(va), nota = IF(?, VALUES(nota), nota)`,
+      [encuentroId, usuario.id, voy, nota ?? '', notaParam != null]
+    );
+
+    // A los coaches les avisa si alguien no va, o si deja una nota nueva
+    const notaNueva = nota && nota !== antes?.nota ? nota : null;
+    const cambioANoVa = !voy && antes?.va !== 0;
+    if (cambioANoVa || notaNueva) {
       const [coaches] = await pool.query(
         "SELECT usuario_id FROM cuerpro_miembros WHERE grupo_id = ? AND rol = 'coach' AND usuario_id <> ?",
         [encuentro.grupo_id, usuario.id]
       );
       notificar(coaches.map(c => c.usuario_id), {
-        title: 'Alguien no va',
-        body: `${usuario.nombre} no va al entrenamiento`,
-        data: { tipo: 'no_voy', encuentro_id: encuentro.id },
+        title: voy ? `${usuario.nombre} va` : 'Alguien no va',
+        body: `${usuario.nombre} ${voy ? 'va' : 'no va'} al entrenamiento${notaNueva ? `: ${notaNueva}` : ''}`,
+        data: { tipo: voy ? 'nota' : 'no_voy', encuentro_id: encuentro.id },
       });
-      return { objetivo: await objetivoDelMes(usuario.id, encuentro.grupo_id, encuentro.fecha_hora) };
     }
+    if (!voy) return { objetivo: await objetivoDelMes(usuario.id, encuentro.grupo_id, encuentro.fecha_hora) };
     return { objetivo: null };
   },
 
