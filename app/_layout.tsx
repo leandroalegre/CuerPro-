@@ -4,6 +4,7 @@ import { router, Stack, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { Colors } from '../constants/theme';
 import { useNotificaciones } from '../hooks/useNotificaciones';
 import { SesionProvider, useSesion } from '../hooks/useSesion';
@@ -42,11 +43,18 @@ function Navegacion() {
     if (token && enLogin) router.replace('/');
   }, [loaded, token, enLogin]);
 
+  // Mientras se decide a dónde ir, una tapa del color de fondo evita ver
+  // las pestañas un instante antes del login.
+  const redirigiendo = !loaded || (!token && !enLogin) || (!!token && enLogin);
+
   return (
-    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.bg } }}>
-      <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="login" />
-    </Stack>
+    <>
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.bg } }}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="login" />
+      </Stack>
+      {redirigiendo && <View style={[StyleSheet.absoluteFill, { backgroundColor: Colors.bg }]} />}
+    </>
   );
 }
 
