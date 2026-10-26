@@ -227,4 +227,19 @@ test('horarios distintos por día, mover, cancelar y agregar encuentros', { skip
   assert.equal(ej.ok, true, ej.error);
   const cat = await api('ejercicios', { grupo_id: grupoId }, amigo.token);
   assert.ok(cat.ejercicios.some(e => e.id === ej.id && e.grupo_id === grupoId));
+
+  // El próximo encuentro se generó sin plan: al armarlo, toma su rutina
+  assert.equal((await prox()).rutina.length, 0);
+  const plan = nombreDia => ({ dias: [
+    { nombre: nombreDia, ejercicios: [{ ejercicio_id: ej.id }] },
+    { nombre: 'Día B', ejercicios: [{ ejercicio_id: ej.id }, { ejercicio_id: ej.id }] },
+  ] });
+  assert.equal((await api('plan_guardar', { grupo_id: grupoId, plan: plan('Día A') }, coach.token)).ok, true);
+  let p = await prox();
+  assert.equal(p.dia.nombre, 'Día A');
+  assert.equal(p.rutina.length, 1);
+  // Si el coach vuelve a guardar el plan, sigue con el mismo día (del plan nuevo)
+  assert.equal((await api('plan_guardar', { grupo_id: grupoId, plan: plan('Día A editado') }, coach.token)).ok, true);
+  p = await prox();
+  assert.equal(p.dia.nombre, 'Día A editado');
 });

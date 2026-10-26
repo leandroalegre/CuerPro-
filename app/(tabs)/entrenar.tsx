@@ -59,7 +59,9 @@ export default function EntrenarScreen() {
         <Modo texto="Por mi cuenta" activo={solo} onPress={() => setSolo(true)} />
       </View>
 
-      {!solo && (!encuentro?.rutina.length ? (
+      {!solo && (!encuentro ? (
+        <Vacio texto="El grupo todavía no tiene días y horarios. El coach los carga en Grupos. Mientras, podés entrenar por tu cuenta." />
+      ) : !encuentro.rutina.length ? (
         <Vacio texto="No hay rutina para el próximo entrenamiento del grupo. Podés entrenar por tu cuenta." />
       ) : (
         <>

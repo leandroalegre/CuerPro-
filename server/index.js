@@ -264,6 +264,34 @@ async function diaDelPlan(grupoId, fechaHora) {
   return dias[previos % dias.length].id;
 }
 
+// Si el encuentro se generó antes de que hubiera plan, o el coach guardó el plan
+// de nuevo (cada guardado crea uno nuevo), le asigna el día del plan activo:
+// el mismo lugar en el orden si existe, si no el que le toca en la rotación.
+async function conDiaVigente(encuentro) {
+  if (!encuentro) return encuentro;
+  const [[actual]] = encuentro.dia_id
+    ? await pool.query(
+        `SELECT d.orden, p.activo FROM cuerpro_plan_dias d JOIN cuerpro_planes p ON p.id = d.plan_id WHERE d.id = ?`,
+        [encuentro.dia_id]
+      )
+    : [[null]];
+  if (actual && actual.activo) return encuentro;
+
+  let diaId = null;
+  if (actual) {
+    const [[mismo]] = await pool.query(
+      `SELECT d.id FROM cuerpro_plan_dias d JOIN cuerpro_planes p ON p.id = d.plan_id
+       WHERE p.grupo_id = ? AND p.activo = 1 AND d.orden = ? ORDER BY p.id DESC LIMIT 1`,
+      [encuentro.grupo_id, actual.orden]
+    );
+    diaId = mismo?.id ?? null;
+  }
+  if (!diaId) diaId = await diaDelPlan(encuentro.grupo_id, encuentro.fecha_hora);
+  if (!diaId) return encuentro;
+  await pool.query('UPDATE cuerpro_encuentros SET dia_id = ? WHERE id = ?', [diaId, encuentro.id]);
+  return { ...encuentro, dia_id: diaId };
+}
+
 // Próximo encuentro: el más cercano entre los horarios fijos del grupo y los
 // encuentros que el coach movió o agregó. Un horario fijo que el coach movió
 // o canceló se saltea. Si el próximo sale del horario fijo, se crea.
@@ -302,9 +330,9 @@ async function proximoEncuentro(grupoId) {
     if (fijo) break;
   }
 
-  if (!fijo) return agendado || null;
+  if (!fijo) return conDiaVigente(agendado || null);
   const fechaHora = fechaSql(fijo);
-  if (agendado && String(agendado.fecha_hora) <= fechaHora) return agendado;
+  if (agendado && String(agendado.fecha_hora) <= fechaHora) return conDiaVigente(agendado);
 
   await pool.query(
     'INSERT IGNORE INTO cuerpro_encuentros (grupo_id, fecha_hora, dia_id) VALUES (?, ?, ?)',
@@ -314,7 +342,7 @@ async function proximoEncuentro(grupoId) {
     'SELECT * FROM cuerpro_encuentros WHERE grupo_id = ? AND fecha_hora = ?',
     [grupoId, fechaHora]
   );
-  return encuentro;
+  return conDiaVigente(encuentro);
 }
 
 // "2026-10-28 19:30" → valida y devuelve "2026-10-28 19:30:00"
