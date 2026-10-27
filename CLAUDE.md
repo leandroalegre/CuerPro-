@@ -30,6 +30,7 @@ App Expo → https://cuerpro.sistemascloud.ar/api.php
 - Al confirmar se puede dejar una `nota` ("llego 15 tarde"); a los coaches les llega por push.
 - Columnas nuevas en tablas que ya existen en producción: agregarlas también a `COLUMNAS_NUEVAS` en `server/index.js`.
 
+- Planes: un grupo puede tener varios y uno activo (`plan_activar`), que es el que se entrena. Editar uno (`plan_guardar` con `plan_id`) crea una versión nueva y archiva la anterior (`archivado = 1`, se conserva por el historial de series); sin `plan_id` es un plan nuevo. `plan_borrar` archiva un plan no activo.
 - Ejercicios del plan: series, repeticiones (texto: "8-10" o "6 min" para los por tiempo), peso sugerido, `carga` (liviano/moderado/pesado), `descanso_seg` y `nota` del coach.
 - Cargar un plan escrito a mano: `cd server && node scripts/cargar-plan.js <email del coach> planes/<archivo>.json ["grupo"]` (crea los ejercicios que falten para ese grupo).
 

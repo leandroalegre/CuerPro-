@@ -234,16 +234,35 @@ test('horarios distintos por día, mover, cancelar y agregar encuentros', { skip
     { nombre: nombreDia, ejercicios: [{ ejercicio_id: ej.id }] },
     { nombre: 'Día B', ejercicios: [{ ejercicio_id: ej.id }, { ejercicio_id: ej.id }] },
   ] });
-  assert.equal((await api('plan_guardar', { grupo_id: grupoId, plan: plan('Día A') }, coach.token)).ok, true);
+  const g1 = await api('plan_guardar', { grupo_id: grupoId, plan: plan('Día A') }, coach.token);
+  assert.equal(g1.ok, true);
   let p = await prox();
   assert.equal(p.dia.nombre, 'Día A');
   assert.equal(p.rutina.length, 1);
   // Si el coach vuelve a guardar el plan, sigue con el mismo día (del plan nuevo)
-  assert.equal((await api('plan_guardar', { grupo_id: grupoId, plan: plan('Día A editado') }, coach.token)).ok, true);
+  const g2 = await api('plan_guardar', { grupo_id: grupoId, plan_id: g1.plan_id, plan: plan('Día A editado') }, coach.token);
+  assert.equal(g2.ok, true);
   p = await prox();
   assert.equal(p.dia.nombre, 'Día A editado');
   // Si mueve los días de lugar, sigue tocando el mismo día
   const invertido = { dias: [...plan('Día A editado').dias].reverse() };
-  assert.equal((await api('plan_guardar', { grupo_id: grupoId, plan: invertido }, coach.token)).ok, true);
+  const g3 = await api('plan_guardar', { grupo_id: grupoId, plan_id: g2.plan_id, plan: invertido }, coach.token);
+  assert.equal(g3.ok, true);
   assert.equal((await prox()).dia.nombre, 'Día A editado');
+
+  // Varios planes: uno nuevo no cambia el activo hasta que se elige
+  const verano = await api('plan_guardar', { grupo_id: grupoId, plan: { nombre: 'Verano', dias: [{ nombre: 'Full body', ejercicios: [{ ejercicio_id: ej.id }] }] } }, coach.token);
+  assert.equal(verano.ok, true);
+  let planes = (await api('plan', { grupo_id: grupoId }, amigo.token)).planes;
+  assert.deepEqual(planes.map(p => [p.nombre, p.activo]), [['Plan', 1], ['Verano', 0]]);
+  assert.equal((await api('plan', { grupo_id: grupoId, plan_id: verano.plan_id }, amigo.token)).plan.nombre, 'Verano');
+  assert.equal((await api('plan_activar', { grupo_id: grupoId, plan_id: verano.plan_id }, amigo.token)).ok, false);
+  assert.equal((await api('plan_activar', { grupo_id: grupoId, plan_id: verano.plan_id }, coach.token)).ok, true);
+  assert.equal((await api('plan', { grupo_id: grupoId }, amigo.token)).plan.nombre, 'Verano');
+  assert.equal((await prox()).dia.nombre, 'Full body');
+  // El activo no se borra; el otro sí
+  assert.equal((await api('plan_borrar', { grupo_id: grupoId, plan_id: verano.plan_id }, coach.token)).ok, false);
+  assert.equal((await api('plan_borrar', { grupo_id: grupoId, plan_id: g3.plan_id }, coach.token)).ok, true);
+  planes = (await api('plan', { grupo_id: grupoId }, amigo.token)).planes;
+  assert.deepEqual(planes.map(p => p.nombre), ['Verano']);
 });

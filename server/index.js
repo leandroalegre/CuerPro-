@@ -41,6 +41,9 @@ const COLUMNAS_NUEVAS = [
   ['cuerpro_plan_ejercicios', 'carga', "ENUM('liviano','moderado','pesado') DEFAULT NULL AFTER peso_sugerido"],
   ['cuerpro_plan_ejercicios', 'descanso_seg', 'INT DEFAULT NULL AFTER carga'],
   ['cuerpro_plan_ejercicios', 'nota', 'VARCHAR(200) DEFAULT NULL AFTER descanso_seg'],
+  // Antes cada guardado dejaba la versión anterior inactiva: esas pasan a archivadas
+  ['cuerpro_planes', 'archivado', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER publicado',
+   'UPDATE cuerpro_planes SET archivado = 1 WHERE activo = 0'],
 ];
 
 async function initTables() {
@@ -55,13 +58,15 @@ async function initTables() {
     for (const statement of statements) await conn.query(statement);
 
     // Columnas agregadas después de crear las tablas en producción
-    for (const [tabla, columna, definicion] of COLUMNAS_NUEVAS) {
+    for (const [tabla, columna, definicion, alCrear] of COLUMNAS_NUEVAS) {
       const [existe] = await conn.query(
         `SELECT 1 FROM information_schema.COLUMNS
          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
         [tabla, columna]
       );
-      if (!existe.length) await conn.query(`ALTER TABLE ${tabla} ADD COLUMN ${columna} ${definicion}`);
+      if (existe.length) continue;
+      await conn.query(`ALTER TABLE ${tabla} ADD COLUMN ${columna} ${definicion}`);
+      if (alCrear) await conn.query(alCrear);
     }
 
     // Catálogo precargado (solo la primera vez)
@@ -400,16 +405,31 @@ async function objetivoDelMes(usuarioId, grupoId, fechaHora) {
   return { nivel: nivel.nivel, objetivo: nivel.siguiente.nombre, necesitas, quedan, llegas, texto };
 }
 
-// Guarda una versión nueva del plan y deja la anterior inactiva, así no se pierde el historial.
-// También lo usa scripts/cargar-plan.js.
-async function guardarPlan(grupoId, plan) {
+// Un grupo puede tener varios planes y uno activo, que es el que se entrena.
+// Editar un plan guarda una versión nueva y archiva la anterior, así no se pierde
+// el historial de series. Sin `reemplaza` es un plan nuevo; queda activo si se pide
+// o si el grupo no tenía ninguno. También lo usa scripts/cargar-plan.js.
+async function guardarPlan(grupoId, plan, { reemplaza = null, activar = false } = {}) {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    await conn.query('UPDATE cuerpro_planes SET activo = 0 WHERE grupo_id = ?', [grupoId]);
+    let activo = activar;
+    if (reemplaza) {
+      const [[viejo]] = await conn.query(
+        'SELECT activo FROM cuerpro_planes WHERE id = ? AND grupo_id = ? AND archivado = 0',
+        [reemplaza, grupoId]
+      );
+      if (!viejo) throw httpError(404, 'Ese plan ya no existe');
+      activo = activo || !!viejo.activo;
+      await conn.query('UPDATE cuerpro_planes SET archivado = 1, activo = 0 WHERE id = ?', [reemplaza]);
+    } else if (!activo) {
+      const [[hay]] = await conn.query('SELECT 1 AS si FROM cuerpro_planes WHERE grupo_id = ? AND activo = 1', [grupoId]);
+      activo = !hay;
+    }
+    if (activo) await conn.query('UPDATE cuerpro_planes SET activo = 0 WHERE grupo_id = ?', [grupoId]);
     const [p] = await conn.query(
-      'INSERT INTO cuerpro_planes (grupo_id, nombre) VALUES (?, ?)',
-      [grupoId, plan.nombre || 'Plan']
+      'INSERT INTO cuerpro_planes (grupo_id, nombre, activo) VALUES (?, ?, ?)',
+      [grupoId, plan.nombre || 'Plan', activo ? 1 : 0]
     );
     for (const [i, dia] of plan.dias.entries()) {
       const [d] = await conn.query(
@@ -722,21 +742,25 @@ const acciones = {
   },
 
   // ── Planes ──
+  // Sin plan_id devuelve el activo. `planes` lista todos los del grupo.
   async plan(req) {
     const usuario = await sesion(req);
     const [grupoId] = requireParams(req, 'grupo_id');
     await miembro(grupoId, usuario.id);
-    const [[plan]] = await pool.query(
-      'SELECT id, nombre FROM cuerpro_planes WHERE grupo_id = ? AND activo = 1 ORDER BY id DESC LIMIT 1',
+    const [planes] = await pool.query(
+      'SELECT id, nombre, activo FROM cuerpro_planes WHERE grupo_id = ? AND archivado = 0 ORDER BY activo DESC, nombre',
       [grupoId]
     );
-    if (!plan) return { plan: null };
+    const planId = Number(getParam(req, 'plan_id')) || null;
+    // Si el que pidió ya no está (lo borraron o lo editaron), muestra el activo
+    const plan = planes.find(p => p.id === planId) || planes.find(p => p.activo);
+    if (!plan) return { plan: null, planes };
     const [dias] = await pool.query(
       'SELECT id, orden, nombre FROM cuerpro_plan_dias WHERE plan_id = ? ORDER BY orden',
       [plan.id]
     );
     for (const dia of dias) dia.ejercicios = await rutinaDelDia(dia.id, null);
-    return { plan: { ...plan, dias } };
+    return { plan: { ...plan, dias }, planes };
   },
 
   // plan: {nombre, dias: [{nombre, ejercicios: [{ejercicio_id, series, repeticiones, peso_sugerido,
@@ -749,8 +773,38 @@ const acciones = {
     const plan = typeof planParam === 'string' ? JSON.parse(planParam) : planParam;
     if (!plan.dias?.length) throw httpError(400, 'El plan necesita al menos un día');
 
-    const planId = await guardarPlan(grupoId, plan);
+    const planId = await guardarPlan(grupoId, plan, {
+      reemplaza: Number(getParam(req, 'plan_id')) || null,
+      activar: ['1', 1, true].includes(getParam(req, 'activar')),
+    });
     return { plan_id: planId, avisos: await avisosDelPlan(plan) };
+  },
+
+  // El grupo pasa a entrenar con este plan
+  async plan_activar(req) {
+    const usuario = await sesion(req);
+    const [grupoId, planId] = requireParams(req, 'grupo_id', 'plan_id');
+    await puedeEditarPlan(grupoId, usuario.id);
+    const [[plan]] = await pool.query(
+      'SELECT id, nombre FROM cuerpro_planes WHERE id = ? AND grupo_id = ? AND archivado = 0',
+      [planId, grupoId]
+    );
+    if (!plan) throw httpError(404, 'Plan no encontrado');
+    await pool.query('UPDATE cuerpro_planes SET activo = (id = ?) WHERE grupo_id = ?', [plan.id, grupoId]);
+    return {};
+  },
+
+  // Borra un plan que no está en uso (queda archivado por el historial)
+  async plan_borrar(req) {
+    const usuario = await sesion(req);
+    const [grupoId, planId] = requireParams(req, 'grupo_id', 'plan_id');
+    await puedeEditarPlan(grupoId, usuario.id);
+    const [r] = await pool.query(
+      'UPDATE cuerpro_planes SET archivado = 1 WHERE id = ? AND grupo_id = ? AND activo = 0 AND archivado = 0',
+      [planId, grupoId]
+    );
+    if (!r.affectedRows) throw httpError(400, 'Solo se puede borrar un plan que no esté activo');
+    return {};
   },
 
   // ── Encuentros y asistencia ──

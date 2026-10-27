@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS cuerpro_planes (
   nombre      VARCHAR(100) NOT NULL,
   activo      TINYINT(1) NOT NULL DEFAULT 1,
   publicado   TINYINT(1) NOT NULL DEFAULT 0,
+  archivado   TINYINT(1) NOT NULL DEFAULT 0, -- versión vieja de un plan editado
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (grupo_id)   REFERENCES cuerpro_grupos(id)   ON DELETE CASCADE,
   FOREIGN KEY (usuario_id) REFERENCES cuerpro_usuarios(id) ON DELETE CASCADE

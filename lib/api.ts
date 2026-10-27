@@ -117,5 +117,6 @@ export interface Ejercicio {
 }
 
 export interface PlanDia { id: number; orden: number; nombre: string; ejercicios: EjercicioRutina[] }
-export interface Plan { id: number; nombre: string; dias: PlanDia[] }
+export interface Plan { id: number; nombre: string; activo: number; dias: PlanDia[] }
+export interface PlanResumen { id: number; nombre: string; activo: number }
 export interface Propuesta { id: number; texto: string; estado: 'pendiente' | 'aceptada' | 'rechazada'; created_at: string; autor: string }

@@ -1,20 +1,21 @@
 /**
  * Pantalla PLAN
  * - Ver el plan del grupo: días, ejercicios, series y alternativas
+ * - El grupo puede tener varios planes; el activo es el que se entrena
  * - El coach (o todos, si el grupo es abierto) lo arma y lo edita; los ejercicios
  *   son tarjetas que se arrastran para cambiar el orden
  * - Los miembros proponen cambios y el coach los acepta o rechaza
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Alert, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Alert, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { NestableDraggableFlatList, NestableScrollContainer, RenderItemParams, ScaleDecorator } from 'react-native-draggable-flatlist';
 import { EjercicioNuevo, SelectorEjercicio } from '../../components/SelectorEjercicio';
 import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useSesion } from '../../hooks/useSesion';
-import { api, Carga, CARGAS, Ejercicio, EQUIPO, Plan, Propuesta, resumenEjercicio, textoPausa } from '../../lib/api';
+import { api, Carga, CARGAS, Ejercicio, EQUIPO, Plan, Propuesta, resumenEjercicio, textoPausa, PlanResumen } from '../../lib/api';
 
 interface EjEdit {
   key: string;
@@ -39,6 +40,9 @@ const nuevaKey = () => `k${++contador}`;
 export default function PlanScreen() {
   const { token, grupo } = useSesion();
   const [plan, setPlan] = useState<Plan | null>(null);
+  const [planes, setPlanes] = useState<PlanResumen[]>([]);
+  const [verId, setVerId] = useState<number | null>(null); // plan que se está mirando (null: el activo)
+  const [editaId, setEditaId] = useState<number | null>(null); // null: plan nuevo
   const [catalogo, setCatalogo] = useState<Ejercicio[]>([]);
   const [propuestas, setPropuestas] = useState<Propuesta[]>([]);
   const [cargando, setCargando] = useState(false);
@@ -51,17 +55,19 @@ export default function PlanScreen() {
   const [textoPropuesta, setTextoPropuesta] = useState('');
 
   const esCoach = grupo?.rol === 'coach';
+  useEffect(() => setVerId(null), [grupo?.id]);
 
   const cargar = useCallback(async () => {
     if (!token || !grupo) return;
     setCargando(true);
     try {
       const [p, c, pr] = await Promise.all([
-        api<{ plan: Plan | null }>('plan', { grupo_id: grupo.id }, token),
+        api<{ plan: Plan | null; planes: PlanResumen[] }>('plan', { grupo_id: grupo.id, ...(verId && { plan_id: verId }) }, token),
         api<{ ejercicios: Ejercicio[] }>('ejercicios', { grupo_id: grupo.id }, token),
         api<{ propuestas: Propuesta[] }>('propuestas', { grupo_id: grupo.id }, token),
       ]);
       setPlan(p.plan);
+      setPlanes(p.planes);
       setCatalogo(c.ejercicios);
       setPropuestas(pr.propuestas);
     } catch (e: any) {
@@ -69,7 +75,7 @@ export default function PlanScreen() {
     } finally {
       setCargando(false);
     }
-  }, [token, grupo]);
+  }, [token, grupo, verId]);
 
   useFocusEffect(useCallback(() => { if (!editando) cargar(); }, [cargar, editando]));
 
@@ -82,11 +88,13 @@ export default function PlanScreen() {
   }
 
   // ── Editor ──
-  const empezarEdicion = () => {
+  const empezarEdicion = (nuevo = false) => {
     const porId = new Map(catalogo.map(e => [e.id, e]));
-    setNombrePlan(plan?.nombre ?? 'Plan');
-    setDias(plan
-      ? plan.dias.map(d => ({
+    const base = nuevo ? null : plan;
+    setEditaId(base?.id ?? null);
+    setNombrePlan(base?.nombre ?? (plan ? 'Plan nuevo' : 'Plan'));
+    setDias(base
+      ? base.dias.map(d => ({
           key: nuevaKey(),
           nombre: d.nombre,
           ejercicios: d.ejercicios
@@ -165,8 +173,9 @@ export default function PlanScreen() {
     if (vacio >= 0) return Alert.alert('Falta completar', `El ${dias[vacio].nombre || `día ${vacio + 1}`} no tiene ejercicios.`);
     setGuardando(true);
     try {
-      const data = await api<{ avisos: string[] }>('plan_guardar', {
+      const data = await api<{ plan_id: number; avisos: string[] }>('plan_guardar', {
         grupo_id: grupo.id,
+        ...(editaId && { plan_id: editaId }),
         plan: {
           nombre: nombrePlan.trim() || 'Plan',
           dias: dias.map((d, i) => ({
@@ -184,16 +193,47 @@ export default function PlanScreen() {
           })),
         },
       }, token);
+      const eraActivo = editaId ? !!plan?.activo : !planes.some(p => p.activo);
       setEditando(false);
-      await cargar();
+      setVerId(data.plan_id); // al cambiar verId se vuelve a cargar
+      const aviso = data.avisos.length ? `Ojo con el descanso:\n${data.avisos.join('\n')}` : '';
       Alert.alert(
         'Plan guardado',
-        data.avisos.length ? `Ojo con el descanso:\n${data.avisos.join('\n')}` : 'Todo el grupo ya ve el plan nuevo.',
+        aviso || (eraActivo ? 'Todo el grupo ya ve el plan nuevo.' : 'Para entrenar con este plan, tocá "Usar este plan".'),
       );
     } catch (e: any) {
       Alert.alert('No se pudo guardar', e.message);
     } finally {
       setGuardando(false);
+    }
+  };
+
+  // ── Varios planes ──
+  const activar = async () => {
+    if (!plan) return;
+    try {
+      await api('plan_activar', { grupo_id: grupo.id, plan_id: plan.id }, token);
+      await cargar();
+      Alert.alert('Plan activo', `El grupo ahora entrena con "${plan.nombre}".`);
+    } catch (e: any) {
+      Alert.alert('No se pudo', e.message);
+    }
+  };
+
+  const borrar = async () => {
+    if (!plan) return;
+    const seguro = Platform.OS === 'web'
+      ? window.confirm(`¿Borrar "${plan.nombre}"?`)
+      : await new Promise<boolean>(ok => Alert.alert('Borrar plan', `¿Borrar "${plan.nombre}"?`, [
+          { text: 'No', style: 'cancel', onPress: () => ok(false) },
+          { text: 'Borrar', style: 'destructive', onPress: () => ok(true) },
+        ]));
+    if (!seguro) return;
+    try {
+      await api('plan_borrar', { grupo_id: grupo.id, plan_id: plan.id }, token);
+      setVerId(null);
+    } catch (e: any) {
+      Alert.alert('No se pudo', e.message);
     }
   };
 
@@ -390,6 +430,15 @@ export default function PlanScreen() {
     >
       <Etiqueta>{grupo.nombre}</Etiqueta>
 
+      {(planes.length > 1 || (esCoach && planes.length > 0)) && (
+        <View style={[styles.alternativas, { marginBottom: Spacing.md }]}>
+          {planes.map(p => (
+            <Opcion key={p.id} texto={p.activo ? `${p.nombre} ✓` : p.nombre} activa={p.id === plan?.id} onPress={() => setVerId(p.id)} />
+          ))}
+          {esCoach && <Opcion texto="+ Nuevo plan" activa={false} onPress={() => empezarEdicion(true)} />}
+        </View>
+      )}
+
       {!plan && !cargando && (
         <Vacio texto={esCoach ? 'El grupo todavía no tiene plan. Armalo acá abajo.' : 'El coach todavía no armó el plan.'} />
       )}
@@ -397,6 +446,19 @@ export default function PlanScreen() {
       {plan && (
         <>
           <Titulo>{plan.nombre}</Titulo>
+          {plan.activo ? (
+            <Texto muted>Es el plan activo: con este entrena el grupo.</Texto>
+          ) : (
+            <Card style={{ borderColor: Colors.warning, backgroundColor: Colors.warningBg }}>
+              <Texto>Este plan no está activo. El grupo entrena con otro.</Texto>
+              {esCoach && (
+                <View style={styles.filaBotones}>
+                  <Boton titulo="Borrar" tipo="peligro" onPress={borrar} style={{ flex: 1 }} />
+                  <Boton titulo="Usar este plan" onPress={activar} style={{ flex: 1 }} />
+                </View>
+              )}
+            </Card>
+          )}
           {plan.dias.map(d => (
             <Card key={d.id}>
               <Etiqueta>{`Día ${d.orden}`}</Etiqueta>
@@ -417,7 +479,7 @@ export default function PlanScreen() {
       )}
 
       {esCoach && (
-        <Boton titulo={plan ? 'Editar plan' : 'Armar plan'} onPress={empezarEdicion} disabled={!catalogo.length} style={{ marginBottom: Spacing.md }} />
+        <Boton titulo={plan ? 'Editar plan' : 'Armar plan'} onPress={() => empezarEdicion()} disabled={!catalogo.length} style={{ marginBottom: Spacing.md }} />
       )}
 
       {plan && (

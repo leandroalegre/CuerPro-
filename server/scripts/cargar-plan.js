@@ -56,7 +56,7 @@ async function main() {
     }
   }
 
-  const planId = await guardarPlan(grupo.id, plan);
+  const planId = await guardarPlan(grupo.id, plan, { activar: true });
   console.log(`✅ Plan "${plan.nombre}" cargado en "${grupo.nombre}" (plan ${planId}).`);
   if (creados.length) console.log(`Ejercicios nuevos para el grupo: ${creados.join(', ')}`);
 }
