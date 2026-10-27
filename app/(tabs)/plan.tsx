@@ -43,6 +43,8 @@ interface DiaEdit { key: string; nombre: string; ejercicios: EjEdit[] }
 type Selector = { modo: 'ejercicio'; dia: number } | { modo: 'alternativa'; dia: number; ej: number } | null;
 
 let contador = 0;
+// Franja izquierda de cada tarjeta, donde está la manija ≡
+const MANIJA = { left: 0, width: 64 };
 const nuevaKey = () => `k${++contador}`;
 
 export default function PlanScreen() {
@@ -314,6 +316,7 @@ export default function PlanScreen() {
               keyExtractor={e => e.key}
               onDragEnd={({ data }) => cambiarDia(i, { ejercicios: data })}
               activationDistance={8}
+              dragHitSlop={MANIJA} // solo desde la manija ≡, así el resto scrollea en Android
               renderItem={({ item: e, drag, isActive, getIndex }: RenderItemParams<EjEdit>) => {
                 const k = getIndex() ?? 0;
                 const abiertoEste = abierto === e.key;

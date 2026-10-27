@@ -13,8 +13,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Alert, Platform, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
 import { NestableDraggableFlatList, NestableScrollContainer, ScaleDecorator } from 'react-native-draggable-flatlist';
-// La lista va dentro del ScrollView de gesture-handler: en Android el RefreshControl tiene que ser el suyo o no scrollea
-import { RefreshControl } from 'react-native-gesture-handler';
 import { Boton, Campo, Card, CardDestacada, Etiqueta, Insignia, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useEncuentro } from '../../hooks/useEncuentro';
@@ -24,7 +22,7 @@ import { api, Ejercicio, EjercicioRutina, EQUIPO, esPorTiempo, Plan, resumenEjer
 
 export default function EntrenarScreen() {
   const { token, grupo } = useSesion();
-  const { encuentro, cargando, recargar } = useEncuentro();
+  const { encuentro, recargar } = useEncuentro();
   const params = useLocalSearchParams<{ modo?: string }>();
   const [solo, setSolo] = useState(false);
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -130,7 +128,8 @@ export default function EntrenarScreen() {
     <NestableScrollContainer
       style={pantalla.scroll}
       contentContainerStyle={pantalla.contenido}
-      refreshControl={<RefreshControl refreshing={cargando} onRefresh={solo ? cargarPlan : recargar} tintColor={Colors.accent} />}
+      // Sin "tirar para actualizar": en Android, dentro del ScrollView de gesture-handler, trababa el scroll.
+      // Los datos se recargan solos cada vez que entrás a la pestaña.
       keyboardShouldPersistTaps="handled"
     >
       <View style={styles.modos}>
@@ -219,6 +218,9 @@ interface Historial {
   recomendado: { dia_id: number; nombre: string; texto: string } | null;
 }
 
+// Franja izquierda de cada tarjeta, donde está la manija ≡
+const MANIJA = { left: 0, width: 64 };
+
 const DIAS_CORTOS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
 // "2026-10-26" → "lun 26/10"
 function fechaCorta(fecha: string) {
@@ -258,6 +260,8 @@ function ListaRutina({
       keyExtractor={e => String(e.plan_ejercicio_id)}
       onDragEnd={({ data }) => setOrden(data.map(e => e.plan_ejercicio_id))}
       activationDistance={8}
+      // El arrastre solo empieza en la franja de la manija ≡; el resto de la tarjeta deja scrollear la pantalla (en Android si no, el gesto se come el scroll)
+      dragHitSlop={MANIJA}
       renderItem={({ item, drag, isActive, getIndex }) => (
         <ScaleDecorator>
           <EjercicioCard
