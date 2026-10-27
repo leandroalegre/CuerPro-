@@ -35,7 +35,8 @@ App Expo → https://cuerpro.sistemascloud.ar/api.php
 - Cargar un plan escrito a mano: `cd server && node scripts/cargar-plan.js <email del coach> planes/<archivo>.json ["grupo"]` (crea los ejercicios que falten para ese grupo).
 
 - Cuenta: `cambiar_password` (en Grupos → Mi cuenta). Recuperar: `recuperar_pedir` manda un código de 6 números por email con el sendmail del hosting (`SENDMAIL_PATH`, `MAIL_FROM`), vale 30 minutos y 5 intentos, y `recuperar_cambiar` lo canjea. No revela si el email existe.
-- Superadmin (`cuerpro_usuarios.superadmin`): `admin_resumen` (todos los usuarios y grupos) y `admin_blanquear` (contraseña temporal, cierra sus sesiones). Pantalla `app/admin.tsx`, botón en Grupos → Mi cuenta. Se nombra con `cd server && node scripts/hacer-superadmin.js <email> [--quitar]`.
+- Superadmin (`cuerpro_usuarios.superadmin`): `admin_resumen` (todos los usuarios y grupos) y `admin_blanquear` (contraseña temporal, cierra sus sesiones). Pantalla `app/admin.tsx`, botón en Grupos → Mi cuenta. Se nombra con `cd server && node scripts/hacer-superadmin.js <email> [--quitar]`. `admin_plan` le muestra el plan de cualquier grupo (solo lectura).
+- Web instalable (PWA): `public/index.html` (plantilla de Expo con manifest y service worker), `public/manifest.webmanifest`, `public/sw.js` (no cachea nada). `components/InstalarApp.tsx` muestra "Instalá CuerPro" en Hoy.
 
 ## Pruebas
 - `cd server && CUERPRO_TEST_DB=1 DB_NAME=... npm test`: flujo completo contra MySQL (borra las tablas `cuerpro_*`).

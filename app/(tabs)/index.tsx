@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react';
 import { Alert, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Boton, Campo, Card, CardDestacada, Etiqueta, Insignia, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
+import { InstalarApp } from '../../components/InstalarApp';
 import { fraseDelDia } from '../../constants/frases';
 import { fechaLinda, useEncuentro } from '../../hooks/useEncuentro';
 import { useSesion } from '../../hooks/useSesion';
@@ -125,6 +126,7 @@ export default function HoyScreen() {
     >
       <Etiqueta>{grupo.nombre}</Etiqueta>
       <Text style={styles.frase}>{`“${fraseDelDia()}”`}</Text>
+      <InstalarApp />
       {!!planActivo?.vence && diasParaVencer(planActivo.vence) <= 7 && (
         <CardDestacada color={Colors.warning}>
           <Insignia texto="Plan por vencer" tipo="aviso" />

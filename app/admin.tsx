@@ -2,6 +2,7 @@
  * Pantalla ADMINISTRAR (solo superadmin)
  * - Todos los usuarios, con sus grupos y la última vez que entraron
  * - Todos los grupos, con coaches, miembros y plan activo
+ * - Ver el plan de cualquier grupo
  * - Blanquear la contraseña de un usuario
  */
 import { Ionicons } from '@expo/vector-icons';
@@ -12,7 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Boton, Campo, Card, Insignia, pantalla, Texto, Titulo } from '../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../constants/theme';
 import { useSesion } from '../hooks/useSesion';
-import { api, textoVence } from '../lib/api';
+import { api, Plan, resumenEjercicio, textoVence } from '../lib/api';
 
 interface UsuarioAdmin {
   id: number;
@@ -52,6 +53,8 @@ export default function AdminScreen() {
   const [usuarios, setUsuarios] = useState<UsuarioAdmin[]>([]);
   const [grupos, setGrupos] = useState<GrupoAdmin[]>([]);
   const [error, setError] = useState('');
+  // Plan abierto de un grupo: undefined = cargando, null = no tiene
+  const [planAbierto, setPlanAbierto] = useState<{ grupoId: number; plan?: Plan | null } | null>(null);
   // Última contraseña temporal, para que quede a la vista y se pueda pasar
   const [temporal, setTemporal] = useState<{ nombre: string; email: string; password: string } | null>(null);
 
@@ -75,6 +78,18 @@ export default function AdminScreen() {
       const data = await api<{ password: string }>('admin_blanquear', { usuario_id: u.id }, token);
       setTemporal({ nombre: u.nombre, email: u.email, password: data.password });
     } catch (e: any) {
+      Alert.alert('No se pudo', e.message);
+    }
+  };
+
+  const verPlan = async (grupoId: number) => {
+    if (planAbierto?.grupoId === grupoId) return setPlanAbierto(null);
+    setPlanAbierto({ grupoId });
+    try {
+      const data = await api<{ plan: Plan | null }>('admin_plan', { grupo_id: grupoId }, token);
+      setPlanAbierto({ grupoId, plan: data.plan });
+    } catch (e: any) {
+      setPlanAbierto(null);
       Alert.alert('No se pudo', e.message);
     }
   };
@@ -142,6 +157,36 @@ export default function AdminScreen() {
                     {g.plan ? `Plan: ${g.plan}${g.vence ? ` · ${textoVence(g.vence)}` : ''}` : 'Sin plan activo'}
                   </Text>
                   <Text style={styles.detalle}>{`Creado ${fecha(g.creado)}`}</Text>
+                  {!!g.plan && (
+                    <Boton
+                      titulo={planAbierto?.grupoId === g.id ? 'Ocultar plan' : 'Ver plan'}
+                      tipo="secundario"
+                      onPress={() => verPlan(g.id)}
+                      style={{ marginTop: Spacing.sm }}
+                    />
+                  )}
+                  {planAbierto?.grupoId === g.id && (
+                    planAbierto.plan === undefined ? (
+                      <Text style={styles.detalle}>Cargando…</Text>
+                    ) : !planAbierto.plan ? (
+                      <Text style={styles.detalle}>No tiene plan activo.</Text>
+                    ) : (
+                      <View style={{ marginTop: Spacing.sm }}>
+                        {planAbierto.plan.dias.map(d => (
+                          <View key={d.id} style={styles.dia}>
+                            <Text style={styles.diaNombre}>{d.nombre}</Text>
+                            {d.ejercicios.map(e => (
+                              <View key={e.plan_ejercicio_id} style={styles.ejercicio}>
+                                <Text style={styles.ejNombre}>{e.nombre}</Text>
+                                <Text style={styles.detalle}>{resumenEjercicio(e)}</Text>
+                                {!!e.nota && <Text style={styles.nota}>{e.nota}</Text>}
+                              </View>
+                            ))}
+                          </View>
+                        ))}
+                      </View>
+                    )
+                  )}
                 </Card>
               ))}
             {(vista === 'usuarios' ? usuariosVistos : gruposVistos).length === 0 && <Texto muted>No hay resultados.</Texto>}
@@ -165,5 +210,10 @@ const styles = StyleSheet.create({
   fila: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   nombre: { ...Typography.titleMd, color: Colors.textPrimary },
   detalle: { ...Typography.caption, color: Colors.textSecondary, marginTop: 2 },
+  dia: { marginTop: Spacing.sm, paddingTop: Spacing.sm, borderTopWidth: 1, borderTopColor: Colors.border },
+  diaNombre: { ...Typography.titleMd, color: Colors.accent, marginBottom: 4 },
+  ejercicio: { paddingVertical: 6 },
+  ejNombre: { ...Typography.body, color: Colors.textPrimary },
+  nota: { ...Typography.caption, color: Colors.accent, fontStyle: 'italic', marginTop: 2 },
   clave: { fontSize: 28, fontWeight: '700', letterSpacing: 3, color: Colors.accent, marginVertical: Spacing.sm, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
 });

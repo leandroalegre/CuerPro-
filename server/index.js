@@ -927,21 +927,14 @@ const acciones = {
     const usuario = await sesion(req);
     const [grupoId] = requireParams(req, 'grupo_id');
     await miembro(grupoId, usuario.id);
-    const [planes] = await pool.query(
-      `SELECT id, nombre, activo, DATE_FORMAT(vence, '%Y-%m-%d') AS vence
-       FROM cuerpro_planes WHERE grupo_id = ? AND archivado = 0 ORDER BY activo DESC, nombre`,
-      [grupoId]
-    );
-    const planId = Number(getParam(req, 'plan_id')) || null;
-    // Si el que pidió ya no está (lo borraron o lo editaron), muestra el activo
-    const plan = planes.find(p => p.id === planId) || planes.find(p => p.activo);
-    if (!plan) return { plan: null, planes };
-    const [dias] = await pool.query(
-      'SELECT id, orden, nombre FROM cuerpro_plan_dias WHERE plan_id = ? ORDER BY orden',
-      [plan.id]
-    );
-    for (const dia of dias) dia.ejercicios = await rutinaDelDia(dia.id, null);
-    return { plan: { ...plan, dias }, planes };
+    return planDelGrupo(grupoId, Number(getParam(req, 'plan_id')) || null);
+  },
+
+  // El superadmin ve el plan de cualquier grupo (solo lectura)
+  async admin_plan(req) {
+    await superadmin(req);
+    const [grupoId] = requireParams(req, 'grupo_id');
+    return planDelGrupo(grupoId, Number(getParam(req, 'plan_id')) || null);
   },
 
   // plan: {nombre, dias: [{nombre, ejercicios: [{ejercicio_id, series, repeticiones, peso_sugerido,
@@ -1403,6 +1396,24 @@ const acciones = {
     return {};
   },
 };
+
+// Los planes del grupo y el elegido (o el activo) con sus días y ejercicios
+async function planDelGrupo(grupoId, planId) {
+  const [planes] = await pool.query(
+    `SELECT id, nombre, activo, DATE_FORMAT(vence, '%Y-%m-%d') AS vence
+     FROM cuerpro_planes WHERE grupo_id = ? AND archivado = 0 ORDER BY activo DESC, nombre`,
+    [grupoId]
+  );
+  // Si el que pidió ya no está (lo borraron o lo editaron), muestra el activo
+  const plan = planes.find(p => p.id === planId) || planes.find(p => p.activo);
+  if (!plan) return { plan: null, planes };
+  const [dias] = await pool.query(
+    'SELECT id, orden, nombre FROM cuerpro_plan_dias WHERE plan_id = ? ORDER BY orden',
+    [plan.id]
+  );
+  for (const dia of dias) dia.ejercicios = await rutinaDelDia(dia.id, null);
+  return { plan: { ...plan, dias }, planes };
+}
 
 // Avisa al que arma el plan si un músculo se repite en dos días seguidos
 async function avisosDelPlan(plan) {

@@ -1,5 +1,6 @@
 DirectoryIndex index.html
 AddType application/vnd.android.package-archive .apk
+AddType application/manifest+json .webmanifest
 
 # ─── HTTPS redirect ───────────────────────────────────────────────────────────
 RewriteEngine On
