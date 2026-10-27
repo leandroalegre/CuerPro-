@@ -9,10 +9,22 @@ import { Ejercicio, EjercicioRutina, esPorTiempo } from './api';
 
 export type ModoCorto = 'corta' | 'abandonado' | 'aerobico';
 
-export const MODOS_CORTOS: { modo: ModoCorto; texto: string }[] = [
-  { modo: 'corta', texto: 'Versión corta del día' },
-  { modo: 'abandonado', texto: 'Lo más abandonado' },
-  { modo: 'aerobico', texto: 'Aeróbico' },
+export const MODOS_CORTOS: { modo: ModoCorto; texto: string; explicacion: string }[] = [
+  {
+    modo: 'corta',
+    texto: 'Versión corta del día',
+    explicacion: 'Hacés el día que toca, pero solo los ejercicios compuestos (los que mueven más músculos), con una serie menos y 3 minutos de entrada en calor. Seguís a la par del plan y del grupo.',
+  },
+  {
+    modo: 'abandonado',
+    texto: 'Lo más abandonado',
+    explicacion: 'Busca la zona que hace más días que no entrenás (o que nunca hiciste) y te arma sus ejercicios del plan.',
+  },
+  {
+    modo: 'aerobico',
+    texto: 'Aeróbico',
+    explicacion: 'Un circuito de cardio con las máquinas del gimnasio, en bloques de unos 10 minutos, uno tras otro.',
+  },
 ];
 export const MINUTOS = [30, 45, 60];
 

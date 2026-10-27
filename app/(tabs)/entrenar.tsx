@@ -47,14 +47,17 @@ export default function EntrenarScreen() {
   };
 
   // La rutina que se muestra: la del día o la versión para poco tiempo
-  const armar = (base: EjercicioRutina[]): { rutina: EjercicioRutina[]; titulo: string | null } => {
+  // nombre: qué se entrena si no es el día del plan
+  const armar = (base: EjercicioRutina[]): { rutina: EjercicioRutina[]; titulo: string | null; nombre?: string } => {
     if (!corto) return { rutina: base, titulo: null };
     if (corto.modo === 'corta') return { rutina: versionCorta(base, corto.minutos), titulo: 'Versión corta' };
     if (!datosCorto) return { rutina: [], titulo: null };
-    if (corto.modo === 'aerobico') return { rutina: aerobico(datosCorto.cardio, corto.minutos), titulo: 'Circuito aeróbico' };
+    if (corto.modo === 'aerobico') return { rutina: aerobico(datosCorto.cardio, corto.minutos), titulo: 'Aeróbico', nombre: 'Circuito de cardio' };
     const todos = datosCorto.plan?.dias.flatMap(d => d.ejercicios) ?? [];
     const r = loMasAbandonado(todos, datosCorto.musculos, corto.minutos);
-    return r ? { rutina: r.rutina, titulo: `Lo más abandonado: ${r.zona}` } : { rutina: [], titulo: null };
+    return r
+      ? { rutina: r.rutina, titulo: 'Lo más abandonado', nombre: r.zona.charAt(0).toUpperCase() + r.zona.slice(1) }
+      : { rutina: [], titulo: null };
   };
 
   const pocoTiempo = (
@@ -68,23 +71,29 @@ export default function EntrenarScreen() {
       {panelCorto && (
         <Card>
           <Etiqueta>¿Qué hacés?</Etiqueta>
-          <View style={styles.modos}>
-            {MODOS_CORTOS.map(m => (
-              <Modo
+          {MODOS_CORTOS.map(m => {
+            const elegido = (corto?.modo ?? null) === m.modo;
+            return (
+              <TouchableOpacity
                 key={m.modo}
-                texto={m.modo === 'corta' ? `★ ${m.texto}` : m.texto}
-                activo={corto?.modo === m.modo}
+                style={[styles.opcionCorta, elegido && styles.opcionCortaActiva]}
                 onPress={() => setCorto({ modo: m.modo, minutos: corto?.minutos ?? 45 })}
-              />
-            ))}
-          </View>
+              >
+                <Ionicons name={elegido ? 'radio-button-on' : 'radio-button-off'} size={20} color={elegido ? Colors.accent : Colors.textMuted} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.opcionCortaTitulo}>{m.modo === 'corta' ? `${m.texto} (recomendada)` : m.texto}</Text>
+                  <Text style={styles.opcionCortaTexto}>{m.explicacion}</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
           <Etiqueta>Minutos</Etiqueta>
           <View style={styles.modos}>
             {MINUTOS.map(n => (
               <Modo key={n} texto={`${n} min`} activo={corto?.minutos === n} onPress={() => setCorto({ modo: corto?.modo ?? 'corta', minutos: n })} />
             ))}
           </View>
-          <Texto muted>La versión corta deja los ejercicios compuestos, baja una serie y acorta la entrada en calor. Lo que hagas suma igual.</Texto>
+          <Texto muted>Lo que hagas suma igual a tu progreso, aunque no completes el plan.</Texto>
           {corto && <Boton titulo="Volver al plan completo" tipo="secundario" onPress={() => { setCorto(null); setPanelCorto(false); }} style={{ marginTop: Spacing.sm }} />}
         </Card>
       )}
@@ -135,7 +144,7 @@ export default function EntrenarScreen() {
         <>
           <CardDestacada>
             <Insignia texto={armar(encuentro.rutina).titulo ?? 'Toca hoy'} />
-            <Text style={styles.diaTitulo}>{encuentro.dia?.nombre}</Text>
+            <Text style={styles.diaTitulo}>{armar(encuentro.rutina).nombre ?? encuentro.dia?.nombre}</Text>
             <Text style={styles.diaMeta}>
               {`${armar(encuentro.rutina).rutina.length} ejercicios · ~${minutosTotal(armar(encuentro.rutina).rutina)} min · arrastrá ≡ para cambiar el orden`}
             </Text>
@@ -187,7 +196,7 @@ export default function EntrenarScreen() {
           </View>
           {pocoTiempo}
           {dia && corto && (
-            <Texto muted>{`${armar(dia.ejercicios).titulo} · ${armar(dia.ejercicios).rutina.length} ejercicios · ~${minutosTotal(armar(dia.ejercicios).rutina)} min`}</Texto>
+            <Texto muted>{`${armar(dia.ejercicios).titulo}${armar(dia.ejercicios).nombre ? `: ${armar(dia.ejercicios).nombre}` : ''} · ${armar(dia.ejercicios).rutina.length} ejercicios · ~${minutosTotal(armar(dia.ejercicios).rutina)} min`}</Texto>
           )}
           {dia && (
             <ListaRutina
@@ -432,6 +441,13 @@ function Descanso({ fin, onTerminar }: { fin: number; onTerminar: () => void }) 
 }
 
 const styles = StyleSheet.create({
+  opcionCorta: {
+    flexDirection: 'row', gap: Spacing.sm, padding: Spacing.sm, marginBottom: Spacing.sm,
+    borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border,
+  },
+  opcionCortaActiva: { borderColor: Colors.accent, backgroundColor: Colors.accentGlow },
+  opcionCortaTitulo: { ...Typography.body, color: Colors.textPrimary, fontWeight: '600' },
+  opcionCortaTexto: { ...Typography.caption, color: Colors.textSecondary, marginTop: 2 },
   pocoTiempo: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: Spacing.md,
     paddingVertical: 10, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.accent,
