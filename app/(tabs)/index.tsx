@@ -42,6 +42,7 @@ export default function HoyScreen() {
   const noVan = encuentro?.confirmaciones.filter(c => c.va === 0) ?? [];
   const sinResponder = encuentro?.confirmaciones.filter(c => c.va === null) ?? [];
 
+  // Si cambiás de voy a no voy (o al revés) la nota anterior ya no aplica y se borra
   const confirmar = async (va: boolean, conNota?: string) => {
     if (!encuentro) return;
     setEnviando(true);
@@ -139,14 +140,14 @@ export default function HoyScreen() {
               <Boton
                 titulo="Voy"
                 tipo={mia?.va === 1 ? 'exito' : 'secundario'}
-                onPress={() => confirmar(true)}
+                onPress={() => confirmar(true, mia?.va === 0 ? '' : undefined)}
                 cargando={enviando}
                 style={styles.mitad}
               />
               <Boton
                 titulo="No voy"
                 tipo={mia?.va === 0 ? 'peligro' : 'secundario'}
-                onPress={() => confirmar(false)}
+                onPress={() => confirmar(false, mia?.va === 1 ? '' : undefined)}
                 cargando={enviando}
                 style={styles.mitad}
               />

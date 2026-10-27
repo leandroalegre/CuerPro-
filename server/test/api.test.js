@@ -242,4 +242,8 @@ test('horarios distintos por día, mover, cancelar y agregar encuentros', { skip
   assert.equal((await api('plan_guardar', { grupo_id: grupoId, plan: plan('Día A editado') }, coach.token)).ok, true);
   p = await prox();
   assert.equal(p.dia.nombre, 'Día A editado');
+  // Si mueve los días de lugar, sigue tocando el mismo día
+  const invertido = { dias: [...plan('Día A editado').dias].reverse() };
+  assert.equal((await api('plan_guardar', { grupo_id: grupoId, plan: invertido }, coach.token)).ok, true);
+  assert.equal((await prox()).dia.nombre, 'Día A editado');
 });

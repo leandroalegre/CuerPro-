@@ -266,12 +266,12 @@ async function diaDelPlan(grupoId, fechaHora) {
 
 // Si el encuentro se generó antes de que hubiera plan, o el coach guardó el plan
 // de nuevo (cada guardado crea uno nuevo), le asigna el día del plan activo:
-// el mismo lugar en el orden si existe, si no el que le toca en la rotación.
+// el del mismo nombre o lugar si existe, si no el que le toca en la rotación.
 async function conDiaVigente(encuentro) {
   if (!encuentro) return encuentro;
   const [[actual]] = encuentro.dia_id
     ? await pool.query(
-        `SELECT d.orden, p.activo FROM cuerpro_plan_dias d JOIN cuerpro_planes p ON p.id = d.plan_id WHERE d.id = ?`,
+        `SELECT d.orden, d.nombre, p.activo FROM cuerpro_plan_dias d JOIN cuerpro_planes p ON p.id = d.plan_id WHERE d.id = ?`,
         [encuentro.dia_id]
       )
     : [[null]];
@@ -279,10 +279,12 @@ async function conDiaVigente(encuentro) {
 
   let diaId = null;
   if (actual) {
+    // Primero el día con el mismo nombre (aunque el coach lo haya movido), si no el mismo lugar
     const [[mismo]] = await pool.query(
       `SELECT d.id FROM cuerpro_plan_dias d JOIN cuerpro_planes p ON p.id = d.plan_id
-       WHERE p.grupo_id = ? AND p.activo = 1 AND d.orden = ? ORDER BY p.id DESC LIMIT 1`,
-      [encuentro.grupo_id, actual.orden]
+       WHERE p.grupo_id = ? AND p.activo = 1 AND (d.nombre = ? OR d.orden = ?)
+       ORDER BY p.id DESC, d.nombre = ? DESC LIMIT 1`,
+      [encuentro.grupo_id, actual.nombre, actual.orden, actual.nombre]
     );
     diaId = mismo?.id ?? null;
   }
