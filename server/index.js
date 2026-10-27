@@ -30,6 +30,8 @@ const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit:   10,
 });
+// Fechas y "hoy" en hora de Córdoba (Argentina no tiene horario de verano)
+pool.on('connection', conn => conn.query("SET time_zone = '-03:00'"));
 
 // ─── Init tablas ──────────────────────────────────────────────────────────────
 const CARGAS = ['liviano', 'moderado', 'pesado'];
@@ -1014,6 +1016,71 @@ const acciones = {
       await sumarPuntos(usuario.id, grupoId, 'record', `record:${ejercicioId}:${hoy}`);
     }
     return { id: r.insertId, record };
+  },
+
+  // Tus últimos días entrenados (en cualquier grupo o solo) y qué día del plan activo
+  // te conviene hacer: el que hace más tiempo que no hacés.
+  async mis_entrenamientos(req) {
+    const usuario = await sesion(req);
+    const [grupoId] = requireParams(req, 'grupo_id');
+    await miembro(grupoId, usuario.id);
+
+    const [filas] = await pool.query(
+      `SELECT d.id, d.nombre, d.orden, pe.ejercicio_id, a.ejercicio_id AS alternativa_id
+       FROM cuerpro_planes p
+       JOIN cuerpro_plan_dias d ON d.plan_id = p.id
+       JOIN cuerpro_plan_ejercicios pe ON pe.dia_id = d.id
+       LEFT JOIN cuerpro_alternativas a ON a.plan_ejercicio_id = pe.id
+       WHERE p.grupo_id = ? AND p.activo = 1 ORDER BY d.orden`,
+      [grupoId]
+    );
+    const dias = new Map();
+    for (const f of filas) {
+      if (!dias.has(f.id)) dias.set(f.id, { id: f.id, nombre: f.nombre, orden: f.orden, ejercicios: new Set() });
+      dias.get(f.id).ejercicios.add(f.ejercicio_id);
+      if (f.alternativa_id) dias.get(f.id).ejercicios.add(f.alternativa_id);
+    }
+
+    const [series] = await pool.query(
+      `SELECT DATE_FORMAT(s.created_at, '%Y-%m-%d') AS fecha, s.ejercicio_id, e.musculo_principal AS musculo
+       FROM cuerpro_series s JOIN cuerpro_ejercicios e ON e.id = s.ejercicio_id
+       WHERE s.usuario_id = ? AND s.created_at >= NOW() - INTERVAL 60 DAY
+       ORDER BY s.created_at DESC`,
+      [usuario.id]
+    );
+    const porFecha = new Map();
+    for (const s of series) {
+      if (!porFecha.has(s.fecha)) porFecha.set(s.fecha, { fecha: s.fecha, ejercicios: new Set(), musculos: new Set() });
+      porFecha.get(s.fecha).ejercicios.add(s.ejercicio_id);
+      porFecha.get(s.fecha).musculos.add(s.musculo);
+    }
+
+    // A cada fecha le corresponde el día del plan que más ejercicios comparte
+    const ultimaVez = new Map();
+    const entrenamientos = [...porFecha.values()].map(f => {
+      let mejor = null;
+      let comunes = 0;
+      for (const d of dias.values()) {
+        const n = [...f.ejercicios].filter(id => d.ejercicios.has(id)).length;
+        if (n > comunes) { mejor = d; comunes = n; }
+      }
+      if (mejor && !ultimaVez.has(mejor.id)) ultimaVez.set(mejor.id, f.fecha);
+      return { fecha: f.fecha, dia_id: mejor?.id ?? null, dia_nombre: mejor?.nombre ?? null, musculos: [...f.musculos] };
+    });
+
+    // Recomienda el que nunca hiciste o el que hiciste hace más tiempo; empata el orden del plan
+    const candidatos = [...dias.values()].sort((a, b) =>
+      (ultimaVez.get(a.id) ?? '').localeCompare(ultimaVez.get(b.id) ?? '') || a.orden - b.orden);
+    const rec = candidatos[0];
+    const hace = rec && ultimaVez.has(rec.id)
+      ? Math.round((Date.now() - new Date(`${ultimaVez.get(rec.id)}T12:00:00`).getTime()) / 86400000)
+      : null;
+    return {
+      entrenamientos: entrenamientos.slice(0, 5),
+      recomendado: rec
+        ? { dia_id: rec.id, nombre: rec.nombre, texto: hace === null ? 'Todavía no lo hiciste' : hace <= 0 ? 'Lo hiciste hoy' : `Lo hiciste hace ${hace} ${hace === 1 ? 'día' : 'días'}` }
+        : null,
+    };
   },
 
   async progreso(req) {

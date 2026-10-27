@@ -26,6 +26,7 @@ export default function EntrenarScreen() {
   const [solo, setSolo] = useState(false);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [diaId, setDiaId] = useState<number | null>(null);
+  const [historial, setHistorial] = useState<Historial | null>(null);
 
   // Desde Hoy, "Entrenar por mi cuenta" llega con ?modo=solo
   useFocusEffect(useCallback(() => {
@@ -35,9 +36,13 @@ export default function EntrenarScreen() {
   const cargarPlan = useCallback(async () => {
     if (!token || !grupo) return;
     try {
-      const data = await api<{ plan: Plan | null }>('plan', { grupo_id: grupo.id }, token);
+      const [data, hist] = await Promise.all([
+        api<{ plan: Plan | null }>('plan', { grupo_id: grupo.id }, token),
+        api<Historial>('mis_entrenamientos', { grupo_id: grupo.id }, token),
+      ]);
       setPlan(data.plan);
-      setDiaId(d => d ?? encuentro?.dia?.id ?? data.plan?.dias[0]?.id ?? null);
+      setHistorial(hist);
+      setDiaId(d => d ?? hist.recomendado?.dia_id ?? data.plan?.dias[0]?.id ?? null);
     } catch {}
   }, [token, grupo, encuentro?.dia?.id]);
 
@@ -76,10 +81,29 @@ export default function EntrenarScreen() {
         <Vacio texto="Tu grupo todavía no tiene plan. Cuando el coach lo arme, vas a poder entrenar cualquier día por tu cuenta." />
       ) : (
         <>
+          {!!historial?.entrenamientos.length && (
+            <Card>
+              <Etiqueta>Tus últimos entrenamientos</Etiqueta>
+              {historial.entrenamientos.map(e => (
+                <View key={e.fecha} style={styles.filaHistorial}>
+                  <Text style={styles.fechaHistorial}>{fechaCorta(e.fecha)}</Text>
+                  <Text style={styles.textoHistorial} numberOfLines={1}>{e.dia_nombre ?? e.musculos.join(', ')}</Text>
+                </View>
+              ))}
+            </Card>
+          )}
+          {historial?.recomendado && (
+            <Texto>{`Te recomendamos: ${historial.recomendado.nombre}. ${historial.recomendado.texto}.`}</Texto>
+          )}
           <Texto muted>Elegí qué día del plan hacés. Tus series y récords suman igual.</Texto>
           <View style={styles.modos}>
             {plan.dias.map(d => (
-              <Modo key={d.id} texto={d.nombre} activo={d.id === diaId} onPress={() => setDiaId(d.id)} />
+              <Modo
+                key={d.id}
+                texto={d.id === historial?.recomendado?.dia_id ? `★ ${d.nombre}` : d.nombre}
+                activo={d.id === diaId}
+                onPress={() => setDiaId(d.id)}
+              />
             ))}
           </View>
           {dia && <ListaRutina key={dia.id} rutina={dia.ejercicios} encuentroId={null} onCambio={() => {}} />}
@@ -87,6 +111,18 @@ export default function EntrenarScreen() {
       ))}
     </NestableScrollContainer>
   );
+}
+
+interface Historial {
+  entrenamientos: { fecha: string; dia_id: number | null; dia_nombre: string | null; musculos: string[] }[];
+  recomendado: { dia_id: number; nombre: string; texto: string } | null;
+}
+
+const DIAS_CORTOS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+// "2026-10-26" → "lun 26/10"
+function fechaCorta(fecha: string) {
+  const [a, m, d] = fecha.split('-').map(Number);
+  return `${DIAS_CORTOS[new Date(a, m - 1, d).getDay()]} ${d}/${m}`;
 }
 
 function Modo({ texto, activo, onPress }: { texto: string; activo: boolean; onPress: () => void }) {
@@ -291,6 +327,9 @@ function Descanso({ fin, onTerminar }: { fin: number; onTerminar: () => void }) 
 }
 
 const styles = StyleSheet.create({
+  filaHistorial: { flexDirection: 'row', gap: Spacing.sm, paddingVertical: 4 },
+  fechaHistorial: { ...Typography.caption, color: Colors.textSecondary, width: 72 },
+  textoHistorial: { ...Typography.body, color: Colors.textPrimary, flex: 1, minWidth: 0 },
   cabecera: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   descanso: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: Spacing.md,
