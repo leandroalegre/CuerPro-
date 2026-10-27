@@ -16,7 +16,7 @@ import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { fraseDelDia } from '../../constants/frases';
 import { fechaLinda, useEncuentro } from '../../hooks/useEncuentro';
 import { useSesion } from '../../hooks/useSesion';
-import { api, Confirmacion } from '../../lib/api';
+import { api, Confirmacion, diasParaVencer, PlanResumen, textoVence } from '../../lib/api';
 
 export default function HoyScreen() {
   const { token, usuario, grupo } = useSesion();
@@ -34,6 +34,14 @@ export default function HoyScreen() {
       .then(d => setAvisos(d.avisos))
       .catch(() => {});
   }, [token, encuentro?.id]);
+  // Al coach le avisa cuando el plan activo está por vencer
+  const [planActivo, setPlanActivo] = useState<PlanResumen | null>(null);
+  useEffect(() => {
+    if (!token || !grupo || grupo.rol !== 'coach') return setPlanActivo(null);
+    api<{ planes: PlanResumen[] }>('plan', { grupo_id: grupo.id }, token)
+      .then(d => setPlanActivo(d.planes.find(p => p.activo) ?? null))
+      .catch(() => {});
+  }, [token, grupo?.id, grupo?.rol]);
 
   if (!grupo) {
     return (
@@ -117,6 +125,16 @@ export default function HoyScreen() {
     >
       <Etiqueta>{grupo.nombre}</Etiqueta>
       <Text style={styles.frase}>{`“${fraseDelDia()}”`}</Text>
+      {!!planActivo?.vence && diasParaVencer(planActivo.vence) <= 7 && (
+        <CardDestacada color={Colors.warning}>
+          <Insignia texto="Plan por vencer" tipo="aviso" />
+          <Text style={styles.avisoTexto}>{`${planActivo.nombre}: ${textoVence(planActivo.vence)}.`}</Text>
+          <TouchableOpacity onPress={() => router.push('/plan')}>
+            <Text style={[styles.avisoTexto, { color: Colors.accent, marginTop: Spacing.xs }]}>Armar el próximo plan →</Text>
+          </TouchableOpacity>
+        </CardDestacada>
+      )}
+
       {avisos.length > 0 && (
         <CardDestacada color={Colors.warning}>
           <Insignia texto="Músculos para retomar" tipo="aviso" />

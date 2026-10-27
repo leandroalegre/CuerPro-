@@ -67,6 +67,7 @@ const COLUMNAS_NUEVAS = [
   ['cuerpro_plan_ejercicios', 'nota', 'VARCHAR(200) DEFAULT NULL AFTER descanso_seg'],
   ['cuerpro_plan_ejercicios', 'union_siguiente', "ENUM('superserie','circuito') DEFAULT NULL AFTER nota"],
   // Antes cada guardado dejaba la versión anterior inactiva: esas pasan a archivadas
+  ['cuerpro_planes', 'vence', 'DATE DEFAULT NULL AFTER archivado'],
   ['cuerpro_grupos', 'dias_por_zona', 'VARCHAR(255) DEFAULT NULL AFTER dias_aviso_musculo'],
   ['cuerpro_planes', 'archivado', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER publicado',
    'UPDATE cuerpro_planes SET archivado = 1 WHERE activo = 0'],
@@ -455,8 +456,8 @@ async function guardarPlan(grupoId, plan, { reemplaza = null, activar = false } 
     }
     if (activo) await conn.query('UPDATE cuerpro_planes SET activo = 0 WHERE grupo_id = ?', [grupoId]);
     const [p] = await conn.query(
-      'INSERT INTO cuerpro_planes (grupo_id, nombre, activo) VALUES (?, ?, ?)',
-      [grupoId, plan.nombre || 'Plan', activo ? 1 : 0]
+      'INSERT INTO cuerpro_planes (grupo_id, nombre, activo, vence) VALUES (?, ?, ?, ?)',
+      [grupoId, plan.nombre || 'Plan', activo ? 1 : 0, /^\d{4}-\d{2}-\d{2}$/.test(plan.vence || '') ? plan.vence : null]
     );
     for (const [i, dia] of plan.dias.entries()) {
       const [d] = await conn.query(
@@ -785,7 +786,8 @@ const acciones = {
     const [grupoId] = requireParams(req, 'grupo_id');
     await miembro(grupoId, usuario.id);
     const [planes] = await pool.query(
-      'SELECT id, nombre, activo FROM cuerpro_planes WHERE grupo_id = ? AND archivado = 0 ORDER BY activo DESC, nombre',
+      `SELECT id, nombre, activo, DATE_FORMAT(vence, '%Y-%m-%d') AS vence
+       FROM cuerpro_planes WHERE grupo_id = ? AND archivado = 0 ORDER BY activo DESC, nombre`,
       [grupoId]
     );
     const planId = Number(getParam(req, 'plan_id')) || null;

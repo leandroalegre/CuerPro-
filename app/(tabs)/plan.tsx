@@ -15,7 +15,7 @@ import { EjercicioNuevo, SelectorEjercicio } from '../../components/SelectorEjer
 import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useSesion } from '../../hooks/useSesion';
-import { api, Carga, CARGAS, Ejercicio, EQUIPO, Plan, Propuesta, resumenEjercicio, textoPausa, PlanResumen, Union, UNIONES } from '../../lib/api';
+import { api, Carga, CARGAS, Ejercicio, EQUIPO, Plan, Propuesta, resumenEjercicio, textoPausa, PlanResumen, Union, UNIONES, diasParaVencer, textoVence } from '../../lib/api';
 
 interface EjEdit {
   key: string;
@@ -31,6 +31,13 @@ interface EjEdit {
 }
 
 const PAUSAS = [60, 90, 120, 180];
+const SEMANAS = [4, 6, 8];
+// Fecha dentro de n semanas, "2026-12-08"
+function enSemanas(n: number) {
+  const f = new Date();
+  f.setDate(f.getDate() + n * 7);
+  return `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}-${String(f.getDate()).padStart(2, '0')}`;
+}
 interface DiaEdit { key: string; nombre: string; ejercicios: EjEdit[] }
 
 type Selector = { modo: 'ejercicio'; dia: number } | { modo: 'alternativa'; dia: number; ej: number } | null;
@@ -51,6 +58,7 @@ export default function PlanScreen() {
   const [editando, setEditando] = useState(false);
   const [abierto, setAbierto] = useState<string | null>(null); // tarjeta de ejercicio abierta para editar
   const [nombrePlan, setNombrePlan] = useState('');
+  const [vence, setVence] = useState<string | null>(null);
   const [dias, setDias] = useState<DiaEdit[]>([]);
   const [selector, setSelector] = useState<Selector>(null);
   const [guardando, setGuardando] = useState(false);
@@ -95,6 +103,7 @@ export default function PlanScreen() {
     const base = nuevo ? null : plan;
     setEditaId(base?.id ?? null);
     setNombrePlan(base?.nombre ?? (plan ? 'Plan nuevo' : 'Plan'));
+    setVence(base?.vence ?? null);
     setDias(base
       ? base.dias.map(d => ({
           key: nuevaKey(),
@@ -181,6 +190,7 @@ export default function PlanScreen() {
         ...(editaId && { plan_id: editaId }),
         plan: {
           nombre: nombrePlan.trim() || 'Plan',
+          vence,
           dias: dias.map((d, i) => ({
             nombre: d.nombre.trim() || `Día ${i + 1}`,
             ejercicios: d.ejercicios.map(e => ({
@@ -268,6 +278,14 @@ export default function PlanScreen() {
       <NestableScrollContainer style={pantalla.scroll} contentContainerStyle={pantalla.contenido} keyboardShouldPersistTaps="handled">
         <Etiqueta>Nombre del plan</Etiqueta>
         <Campo value={nombrePlan} onChangeText={setNombrePlan} placeholder="Plan" />
+        <Etiqueta>Vencimiento</Etiqueta>
+        <View style={[styles.alternativas, { marginBottom: Spacing.xs }]}>
+          {SEMANAS.map(n => (
+            <Opcion key={n} texto={`${n} semanas`} activa={false} onPress={() => setVence(enSemanas(n))} />
+          ))}
+          <Opcion texto="Sin vencimiento" activa={!vence} onPress={() => setVence(null)} />
+        </View>
+        <Texto muted>{vence ? `${textoVence(vence)}. Te avisamos una semana antes para armar el próximo.` : 'El plan no vence.'}</Texto>
         <Texto muted>Arrastrá cada ejercicio desde ≡ para cambiar el orden. Tocalo para editarlo.</Texto>
 
         {dias.map((d, i) => (
@@ -463,6 +481,11 @@ export default function PlanScreen() {
                     {`${cuantos(plan.dias.length, 'día', 'días')} · ${cuantos(plan.dias.reduce((n, d) => n + d.ejercicios.length, 0), 'ejercicio', 'ejercicios')}`}
                   </Text>
                 </View>
+                {!!plan.vence && (
+                  <Text style={[styles.mini, { marginTop: Spacing.xs }, diasParaVencer(plan.vence) <= 7 && { color: Colors.warning }]}>
+                    {textoVence(plan.vence)}
+                  </Text>
+                )}
               </View>
               {(planes.length > 1 || esCoach) && (
                 <TouchableOpacity style={styles.cambiar} onPress={() => setEligiendo(!eligiendo)}>

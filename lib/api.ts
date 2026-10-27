@@ -120,6 +120,22 @@ export interface Ejercicio {
 }
 
 export interface PlanDia { id: number; orden: number; nombre: string; ejercicios: EjercicioRutina[] }
-export interface Plan { id: number; nombre: string; activo: number; dias: PlanDia[] }
-export interface PlanResumen { id: number; nombre: string; activo: number }
+export interface Plan { id: number; nombre: string; activo: number; vence: string | null; dias: PlanDia[] }
+export interface PlanResumen { id: number; nombre: string; activo: number; vence: string | null }
+
+// Días hasta que vence el plan ("2026-11-30"); negativo si ya venció
+export function diasParaVencer(vence: string) {
+  const [a, m, d] = vence.split('-').map(Number);
+  const hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+  return Math.round((new Date(a, m - 1, d).getTime() - hoy.getTime()) / 86400000);
+}
+
+export function textoVence(vence: string) {
+  const dias = diasParaVencer(vence);
+  const [, m, d] = vence.split('-');
+  if (dias < 0) return `Venció el ${Number(d)}/${Number(m)}`;
+  if (dias === 0) return 'Vence hoy';
+  return `Vence el ${Number(d)}/${Number(m)} (${dias === 1 ? 'falta 1 día' : `faltan ${dias} días`})`;
+}
 export interface Propuesta { id: number; texto: string; estado: 'pendiente' | 'aceptada' | 'rechazada'; created_at: string; autor: string }
