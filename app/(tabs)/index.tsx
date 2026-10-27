@@ -26,6 +26,14 @@ export default function HoyScreen() {
   const [agenda, setAgenda] = useState<'mover' | 'agregar' | null>(null);
   const notaGuardada = encuentro?.confirmaciones.find(c => c.usuario_id === usuario?.id)?.nota ?? '';
   useEffect(() => setNota(notaGuardada), [encuentro?.id, notaGuardada]);
+  // Músculos que hace rato no entrenás (los días los elige el coach en Grupos)
+  const [avisos, setAvisos] = useState<{ musculo: string; texto: string }[]>([]);
+  useEffect(() => {
+    if (!token) return;
+    api<{ avisos: { musculo: string; texto: string }[] }>('progreso', {}, token)
+      .then(d => setAvisos(d.avisos))
+      .catch(() => {});
+  }, [token, encuentro?.id]);
 
   if (!grupo) {
     return (
@@ -109,6 +117,11 @@ export default function HoyScreen() {
     >
       <Etiqueta>{grupo.nombre}</Etiqueta>
       <Text style={styles.frase}>{`“${fraseDelDia()}”`}</Text>
+      {avisos.map(a => (
+        <Card key={a.musculo} style={{ borderColor: Colors.warning, backgroundColor: Colors.warningBg }}>
+          <Texto>{`${a.texto}. ¡Retomalo!`}</Texto>
+        </Card>
+      ))}
 
       {error && <Vacio texto={error} />}
 

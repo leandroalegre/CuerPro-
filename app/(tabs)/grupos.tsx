@@ -13,10 +13,11 @@ import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useSesion } from '../../hooks/useSesion';
 import { api } from '../../lib/api';
 
+const DIAS_AVISO = [3, 4, 5, 6, 7, 10];
 const DIAS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
 interface Detalle {
-  grupo: { quien_edita: 'todos' | 'algunos' };
+  grupo: { quien_edita: 'todos' | 'algunos'; dias_aviso_musculo: number };
   miembros: { id: number; nombre: string; rol: string }[];
   horarios: { id: number; dia_semana: number; hora: string }[];
 }
@@ -80,9 +81,9 @@ export default function GruposScreen() {
       Alert.alert('No se pudo abrir WhatsApp', textoInvitacion()),
     );
 
-  // El coach decide si todos hacen todo o solo algunos (cada miembro se puede hacer coach)
+  // Ajustes del grupo que cambia el coach: quién es coach y el aviso de músculos
   const todosCoach = detalle?.grupo.quien_edita === 'todos';
-  const cambiarPermisos = async (accion: string, datos: object) => {
+  const cambiarGrupo = async (accion: string, datos: object) => {
     if (!grupo) return;
     try {
       await api(accion, { grupo_id: grupo.id, ...datos }, token);
@@ -144,7 +145,7 @@ export default function GruposScreen() {
               </View>
               <Switch
                 value={todosCoach}
-                onValueChange={v => cambiarPermisos('grupo_config', { quien_edita: v ? 'todos' : 'algunos' })}
+                onValueChange={v => cambiarGrupo('grupo_config', { quien_edita: v ? 'todos' : 'algunos' })}
                 trackColor={{ true: Colors.accent }}
                 thumbColor="#fff"
               />
@@ -157,7 +158,7 @@ export default function GruposScreen() {
               <View key={m.id} style={styles.fila}>
                 <Text style={styles.textoFila}>{m.nombre}</Text>
                 {puedeCambiar ? (
-                  <TouchableOpacity onPress={() => cambiarPermisos('miembro_rol', { usuario_id: m.id, rol: esCoach ? 'miembro' : 'coach' })}>
+                  <TouchableOpacity onPress={() => cambiarGrupo('miembro_rol', { usuario_id: m.id, rol: esCoach ? 'miembro' : 'coach' })}>
                     <Text style={[styles.rol, { color: Colors.accent }]}>{esCoach ? 'coach · quitar' : 'hacer coach'}</Text>
                   </TouchableOpacity>
                 ) : (
@@ -166,6 +167,27 @@ export default function GruposScreen() {
               </View>
             );
           })}
+
+          <View style={{ marginTop: Spacing.md }}>
+            <Etiqueta>Aviso de músculo sin entrenar</Etiqueta>
+            {grupo.rol === 'coach' ? (
+              <>
+                <Texto muted>Avisar cuando alguien lleva estos días sin trabajar un músculo:</Texto>
+                <View style={styles.dias}>
+                  {DIAS_AVISO.map(n => {
+                    const activo = detalle.grupo.dias_aviso_musculo === n;
+                    return (
+                      <TouchableOpacity key={n} style={[styles.dia, activo && styles.diaActivo]} onPress={() => cambiarGrupo('grupo_config', { dias_aviso_musculo: n })}>
+                        <Text style={[styles.diaTexto, activo && { color: Colors.textInverse }]}>{`${n} días`}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </>
+            ) : (
+              <Texto>{`Te avisa a los ${detalle.grupo.dias_aviso_musculo} días sin trabajar un músculo`}</Texto>
+            )}
+          </View>
 
           <View style={{ marginTop: Spacing.md }}>
             <Etiqueta>Horarios</Etiqueta>
