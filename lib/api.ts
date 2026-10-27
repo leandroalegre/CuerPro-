@@ -53,6 +53,7 @@ export interface EjercicioRutina {
   carga: Carga | null;
   descanso_seg: number | null;
   nota: string | null;
+  union_siguiente: Union | null; // superserie o circuito con el ejercicio que sigue
   alternativas: Alternativa[];
   cambio: (Alternativa & { elegido_por: string }) | null;
 }
@@ -86,6 +87,8 @@ export const EQUIPO: Record<string, string> = {
 
 export type Carga = 'liviano' | 'moderado' | 'pesado';
 export const CARGAS: Carga[] = ['liviano', 'moderado', 'pesado'];
+export type Union = 'superserie' | 'circuito';
+export const UNIONES: Union[] = ['superserie', 'circuito'];
 
 // 90 → "1'30''"
 export function textoPausa(seg: number) {

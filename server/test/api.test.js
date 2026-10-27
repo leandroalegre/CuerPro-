@@ -265,4 +265,12 @@ test('horarios distintos por día, mover, cancelar y agregar encuentros', { skip
   assert.equal((await api('plan_borrar', { grupo_id: grupoId, plan_id: g3.plan_id }, coach.token)).ok, true);
   planes = (await api('plan', { grupo_id: grupoId }, amigo.token)).planes;
   assert.deepEqual(planes.map(p => p.nombre), ['Verano']);
+
+  // Superserie: queda marcada en el primero; el último del día no puede unirse a nada
+  const ss = await api('plan_guardar', { grupo_id: grupoId, plan_id: verano.plan_id, plan: { nombre: 'Verano', dias: [{ nombre: 'Full body', ejercicios: [
+    { ejercicio_id: ej.id, union_siguiente: 'superserie' }, { ejercicio_id: ej.id, union_siguiente: 'circuito' },
+  ] }] } }, coach.token);
+  assert.equal(ss.ok, true, ss.error);
+  const rut = (await api('plan', { grupo_id: grupoId }, amigo.token)).plan.dias[0].ejercicios;
+  assert.deepEqual(rut.map(e => e.union_siguiente), ['superserie', null]);
 });

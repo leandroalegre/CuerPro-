@@ -157,9 +157,16 @@ function ListaRutina({
       keyExtractor={e => String(e.plan_ejercicio_id)}
       onDragEnd={({ data }) => setOrden(data.map(e => e.plan_ejercicio_id))}
       activationDistance={8}
-      renderItem={({ item, drag, isActive }) => (
+      renderItem={({ item, drag, isActive, getIndex }) => (
         <ScaleDecorator>
-          <EjercicioCard ej={item} encuentroId={encuentroId} onCambio={onCambio} drag={drag} activo={isActive} />
+          <EjercicioCard
+            ej={item}
+            encuentroId={encuentroId}
+            onCambio={onCambio}
+            drag={drag}
+            activo={isActive}
+            siguiente={item.union_siguiente ? datos[(getIndex() ?? 0) + 1]?.nombre : undefined}
+          />
         </ScaleDecorator>
       )}
     />
@@ -172,12 +179,14 @@ function EjercicioCard({
   onCambio,
   drag,
   activo,
+  siguiente,
 }: {
   ej: EjercicioRutina;
   encuentroId: number | null; // null: por mi cuenta
   onCambio: () => void;
   drag: () => void;
   activo: boolean;
+  siguiente?: string; // si va en superserie o circuito con el que sigue
 }) {
   const { token } = useSesion();
   const [verAlternativas, setVerAlternativas] = useState(false);
@@ -226,7 +235,8 @@ function EjercicioCard({
         peso: p,
       }, token);
       setHechas([...hechas, { reps: r, peso: p, record: data.record }]);
-      if (ej.descanso_seg && hechas.length + 1 < ej.series) setFinDescanso(Date.now() + ej.descanso_seg * 1000);
+      // En superserie o circuito se pasa directo al siguiente; el descanso va al final de la vuelta
+      if (ej.descanso_seg && !ej.union_siguiente && hechas.length + 1 < ej.series) setFinDescanso(Date.now() + ej.descanso_seg * 1000);
       if (data.record) Alert.alert('¡Récord personal!', `Sumaste 15 puntos con ${p} kg.`);
     } catch (e: any) {
       Alert.alert('Error', e.message);
@@ -249,6 +259,11 @@ function EjercicioCard({
         <Texto muted>{`En lugar de ${ej.nombre}`}</Texto>
       ) : ej.cambio && <Texto muted>{`En lugar de ${ej.nombre} (lo cambió ${ej.cambio.elegido_por})`}</Texto>}
       <Texto muted>{`${resumenEjercicio(ej)} · ${ej.musculo_principal}`}</Texto>
+      {!!siguiente && (
+        <Text style={styles.union}>
+          {`${ej.union_siguiente === 'superserie' ? '↕ Superserie' : '↻ Circuito'} con ${siguiente}: pasá directo, sin descanso`}
+        </Text>
+      )}
       {!!ej.nota && <Text style={styles.nota}>{ej.nota}</Text>}
 
       {!porTiempo && hechas.map((s, i) => (
@@ -330,6 +345,7 @@ const styles = StyleSheet.create({
   filaHistorial: { flexDirection: 'row', gap: Spacing.sm, paddingVertical: 4 },
   fechaHistorial: { ...Typography.caption, color: Colors.textSecondary, width: 72 },
   textoHistorial: { ...Typography.body, color: Colors.textPrimary, flex: 1, minWidth: 0 },
+  union: { ...Typography.caption, color: Colors.accent, fontWeight: '600', marginBottom: Spacing.xs },
   cabecera: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   descanso: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: Spacing.md,

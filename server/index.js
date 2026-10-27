@@ -35,6 +35,7 @@ pool.on('connection', conn => conn.query("SET time_zone = '-03:00'"));
 
 // ─── Init tablas ──────────────────────────────────────────────────────────────
 const CARGAS = ['liviano', 'moderado', 'pesado'];
+const UNIONES = ['superserie', 'circuito'];
 
 const COLUMNAS_NUEVAS = [
   ['cuerpro_encuentros', 'fecha_original', 'DATETIME DEFAULT NULL AFTER dia_id'],
@@ -43,6 +44,7 @@ const COLUMNAS_NUEVAS = [
   ['cuerpro_plan_ejercicios', 'carga', "ENUM('liviano','moderado','pesado') DEFAULT NULL AFTER peso_sugerido"],
   ['cuerpro_plan_ejercicios', 'descanso_seg', 'INT DEFAULT NULL AFTER carga'],
   ['cuerpro_plan_ejercicios', 'nota', 'VARCHAR(200) DEFAULT NULL AFTER descanso_seg'],
+  ['cuerpro_plan_ejercicios', 'union_siguiente', "ENUM('superserie','circuito') DEFAULT NULL AFTER nota"],
   // Antes cada guardado dejaba la versión anterior inactiva: esas pasan a archivadas
   ['cuerpro_planes', 'archivado', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER publicado',
    'UPDATE cuerpro_planes SET archivado = 1 WHERE activo = 0'],
@@ -441,11 +443,13 @@ async function guardarPlan(grupoId, plan, { reemplaza = null, activar = false } 
       for (const [j, ej] of (dia.ejercicios || []).entries()) {
         const [pe] = await conn.query(
           `INSERT INTO cuerpro_plan_ejercicios
-             (dia_id, ejercicio_id, orden, series, repeticiones, peso_sugerido, carga, descanso_seg, nota)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (dia_id, ejercicio_id, orden, series, repeticiones, peso_sugerido, carga, descanso_seg, nota, union_siguiente)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [d.insertId, ej.ejercicio_id, j + 1, ej.series || 3, String(ej.repeticiones || '10'), ej.peso_sugerido ?? null,
            CARGAS.includes(ej.carga) ? ej.carga : null, Number(ej.descanso_seg) || null,
-           ej.nota ? String(ej.nota).trim().slice(0, 200) || null : null]
+           ej.nota ? String(ej.nota).trim().slice(0, 200) || null : null,
+           // El último del día no tiene con quién unirse
+           UNIONES.includes(ej.union_siguiente) && j + 1 < (dia.ejercicios || []).length ? ej.union_siguiente : null]
         );
         for (const [k, altId] of (ej.alternativas || []).entries()) {
           await conn.query(
@@ -469,7 +473,7 @@ async function guardarPlan(grupoId, plan, { reemplaza = null, activar = false } 
 async function rutinaDelDia(diaId, encuentroId) {
   const [ejercicios] = await pool.query(
     `SELECT pe.id AS plan_ejercicio_id, pe.orden, pe.series, pe.repeticiones, pe.peso_sugerido,
-            pe.carga, pe.descanso_seg, pe.nota,
+            pe.carga, pe.descanso_seg, pe.nota, pe.union_siguiente,
             e.id AS ejercicio_id, e.nombre, e.musculo_principal, e.equipo
      FROM cuerpro_plan_ejercicios pe
      JOIN cuerpro_ejercicios e ON e.id = pe.ejercicio_id

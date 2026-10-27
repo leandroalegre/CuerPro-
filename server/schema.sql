@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS cuerpro_plan_ejercicios (
   carga         ENUM('liviano','moderado','pesado') DEFAULT NULL, -- cuando no hay kilos
   descanso_seg  INT DEFAULT NULL,                                 -- pausa entre series
   nota          VARCHAR(200) DEFAULT NULL,                        -- indicación técnica del coach
+  union_siguiente ENUM('superserie','circuito') DEFAULT NULL,     -- va junto con el ejercicio que sigue
   FOREIGN KEY (dia_id)       REFERENCES cuerpro_plan_dias(id)  ON DELETE CASCADE,
   FOREIGN KEY (ejercicio_id) REFERENCES cuerpro_ejercicios(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

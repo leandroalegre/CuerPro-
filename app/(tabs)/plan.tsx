@@ -15,7 +15,7 @@ import { EjercicioNuevo, SelectorEjercicio } from '../../components/SelectorEjer
 import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useSesion } from '../../hooks/useSesion';
-import { api, Carga, CARGAS, Ejercicio, EQUIPO, Plan, Propuesta, resumenEjercicio, textoPausa, PlanResumen } from '../../lib/api';
+import { api, Carga, CARGAS, Ejercicio, EQUIPO, Plan, Propuesta, resumenEjercicio, textoPausa, PlanResumen, Union, UNIONES } from '../../lib/api';
 
 interface EjEdit {
   key: string;
@@ -26,6 +26,7 @@ interface EjEdit {
   carga: Carga | null;
   descanso: number | null;
   nota: string;
+  union: Union | null; // superserie o circuito con el de abajo
   alternativas: Ejercicio[];
 }
 
@@ -108,6 +109,7 @@ export default function PlanScreen() {
               carga: e.carga,
               descanso: e.descanso_seg,
               nota: e.nota ?? '',
+              union: e.union_siguiente,
               alternativas: e.alternativas.map(a => porId.get(a.ejercicio_id)).filter(Boolean) as Ejercicio[],
             })),
         }))
@@ -159,7 +161,7 @@ export default function PlanScreen() {
     if (selector.modo === 'ejercicio') {
       const dia = dias[selector.dia];
       cambiarDia(selector.dia, {
-        ejercicios: [...dia.ejercicios, { key: nuevaKey(), ejercicio: e, series: '3', repeticiones: '10', peso: '', carga: null, descanso: null, nota: '', alternativas: [] }],
+        ejercicios: [...dia.ejercicios, { key: nuevaKey(), ejercicio: e, series: '3', repeticiones: '10', peso: '', carga: null, descanso: null, nota: '', union: null, alternativas: [] }],
       });
     } else {
       const ej = dias[selector.dia].ejercicios[selector.ej];
@@ -188,6 +190,7 @@ export default function PlanScreen() {
               carga: e.carga,
               descanso_seg: e.descanso,
               nota: e.nota.trim(),
+              union_siguiente: e.union,
               alternativas: e.alternativas.map(a => a.id),
             })),
           })),
@@ -351,6 +354,16 @@ export default function PlanScreen() {
                             placeholder="Nota para el grupo (ej: isometría 1'' arriba)"
                             maxLength={200}
                           />
+                          {k + 1 < d.ejercicios.length && (
+                            <>
+                              <Text style={styles.mini}>Junto con el de abajo</Text>
+                              <View style={[styles.alternativas, { marginBottom: Spacing.sm }]}>
+                                {UNIONES.map(u => (
+                                  <Opcion key={u} texto={u} activa={e.union === u} onPress={() => cambiarEj(i, k, { union: e.union === u ? null : u })} />
+                                ))}
+                              </View>
+                            </>
+                          )}
                           <Text style={styles.mini}>Alternativas si la máquina está ocupada</Text>
                           <View style={styles.alternativas}>
                             {e.alternativas.map((a, n) => (
@@ -384,6 +397,7 @@ export default function PlanScreen() {
                         </View>
                       )}
                     </View>
+                    {!!e.union && k + 1 < d.ejercicios.length && <MarcaUnion tipo={e.union} />}
                   </ScaleDecorator>
                 );
               }}
@@ -463,8 +477,9 @@ export default function PlanScreen() {
             <Card key={d.id}>
               <Etiqueta>{`Día ${d.orden}`}</Etiqueta>
               <Text style={styles.diaNombre}>{d.nombre}</Text>
-              {d.ejercicios.map(e => (
-                <View key={e.plan_ejercicio_id} style={styles.ejVista}>
+              {d.ejercicios.map((e, k) => (
+                <View key={e.plan_ejercicio_id} style={[styles.ejVista, k > 0 && d.ejercicios[k - 1].union_siguiente && styles.ejUnido]}>
+                  {k > 0 && !!d.ejercicios[k - 1].union_siguiente && <MarcaUnion tipo={d.ejercicios[k - 1].union_siguiente!} />}
                   <Text style={styles.ejNombre}>{e.nombre}</Text>
                   <Text style={styles.mini}>{`${resumenEjercicio(e)} · ${EQUIPO[e.equipo] ?? e.equipo}`}</Text>
                   {!!e.nota && <Text style={styles.nota}>{e.nota}</Text>}
@@ -534,6 +549,8 @@ const styles = StyleSheet.create({
   },
   tarjetaActiva: { borderColor: Colors.accent, backgroundColor: Colors.bgMuted },
   manija: { paddingRight: Spacing.xs, paddingVertical: Spacing.xs },
+  union: { ...Typography.caption, color: Colors.accent, fontWeight: '600', marginTop: Spacing.xs },
+  ejUnido: { borderTopWidth: 0, paddingTop: 0 },
   ejVista: { borderTopWidth: 1, borderTopColor: Colors.border, paddingVertical: Spacing.sm },
   ejNombre: { ...Typography.body, color: Colors.textPrimary, flexShrink: 1 },
   diaNombre: { ...Typography.titleMd, color: Colors.textPrimary, marginBottom: Spacing.xs },
@@ -559,6 +576,13 @@ const styles = StyleSheet.create({
   filaBotones: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md },
   propuesta: { borderTopWidth: 1, borderTopColor: Colors.border, paddingVertical: Spacing.sm, marginTop: Spacing.sm },
 });
+
+// Marca que el ejercicio va junto con el siguiente
+function MarcaUnion({ tipo }: { tipo: Union }) {
+  return (
+    <Text style={styles.union}>{tipo === 'superserie' ? '↕ Superserie: sin descanso entre los dos' : '↻ Circuito: uno tras otro, descanso al final'}</Text>
+  );
+}
 
 function Opcion({ texto, activa, onPress }: { texto: string; activa: boolean; onPress: () => void }) {
   return (
