@@ -4,6 +4,7 @@
  * - Crear grupo o unirse con código de invitación
  * - El coach carga los horarios fijos del grupo
  */
+import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Alert, Linking, Platform, ScrollView, Share, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
@@ -13,11 +14,13 @@ import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useSesion } from '../../hooks/useSesion';
 import { api } from '../../lib/api';
 
-const DIAS_AVISO = [3, 4, 5, 6, 7, 10];
+const ZONAS: Record<string, string> = {
+  piernas: 'Piernas', espalda: 'Espalda', pecho: 'Pecho', hombros: 'Hombros', brazos: 'Brazos', abdominales: 'Abdominales',
+};
 const DIAS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
 interface Detalle {
-  grupo: { quien_edita: 'todos' | 'algunos'; dias_aviso_musculo: number };
+  grupo: { quien_edita: 'todos' | 'algunos'; dias_por_zona: Record<string, number> };
   miembros: { id: number; nombre: string; rol: string }[];
   horarios: { id: number; dia_semana: number; hora: string }[];
 }
@@ -146,7 +149,7 @@ export default function GruposScreen() {
               <Switch
                 value={todosCoach}
                 onValueChange={v => cambiarGrupo('grupo_config', { quien_edita: v ? 'todos' : 'algunos' })}
-                trackColor={{ true: Colors.accent }}
+                trackColor={{ true: Colors.accent, false: Colors.border }}
                 thumbColor="#fff"
               />
             </View>
@@ -170,23 +173,34 @@ export default function GruposScreen() {
 
           <View style={{ marginTop: Spacing.md }}>
             <Etiqueta>Aviso de músculo sin entrenar</Etiqueta>
-            {grupo.rol === 'coach' ? (
-              <>
-                <Texto muted>Avisar cuando alguien lleva estos días sin trabajar un músculo:</Texto>
-                <View style={styles.dias}>
-                  {DIAS_AVISO.map(n => {
-                    const activo = detalle.grupo.dias_aviso_musculo === n;
-                    return (
-                      <TouchableOpacity key={n} style={[styles.dia, activo && styles.diaActivo]} onPress={() => cambiarGrupo('grupo_config', { dias_aviso_musculo: n })}>
-                        <Text style={[styles.diaTexto, activo && { color: Colors.textInverse }]}>{`${n} días`}</Text>
+            <Texto muted>
+              {grupo.rol === 'coach'
+                ? 'Cuántos días sin trabajar cada zona antes de avisar:'
+                : 'Te avisa cuando llevás estos días sin trabajar una zona:'}
+            </Texto>
+            {Object.entries(ZONAS).map(([zona, nombre]) => {
+              const dias = detalle.grupo.dias_por_zona[zona];
+              const cambiar = (delta: number) =>
+                cambiarGrupo('grupo_config', { dias_por_zona: { ...detalle.grupo.dias_por_zona, [zona]: dias + delta } });
+              return (
+                <View key={zona} style={styles.fila}>
+                  <Text style={styles.textoFila}>{nombre}</Text>
+                  {grupo.rol === 'coach' ? (
+                    <View style={styles.contador}>
+                      <TouchableOpacity onPress={() => cambiar(-1)} disabled={dias <= 2} accessibilityLabel={`Menos días para ${nombre}`}>
+                        <Ionicons name="remove-circle-outline" size={26} color={dias <= 2 ? Colors.border : Colors.accent} />
                       </TouchableOpacity>
-                    );
-                  })}
+                      <Text style={styles.contadorTexto}>{`${dias} días`}</Text>
+                      <TouchableOpacity onPress={() => cambiar(1)} disabled={dias >= 30} accessibilityLabel={`Más días para ${nombre}`}>
+                        <Ionicons name="add-circle-outline" size={26} color={dias >= 30 ? Colors.border : Colors.accent} />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <Text style={styles.rol}>{`${dias} días`}</Text>
+                  )}
                 </View>
-              </>
-            ) : (
-              <Texto>{`Te avisa a los ${detalle.grupo.dias_aviso_musculo} días sin trabajar un músculo`}</Texto>
-            )}
+              );
+            })}
           </View>
 
           <View style={{ marginTop: Spacing.md }}>
@@ -254,6 +268,8 @@ export default function GruposScreen() {
 }
 
 const styles = StyleSheet.create({
+  contador: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  contadorTexto: { ...Typography.body, color: Colors.textPrimary, fontWeight: '600', minWidth: 64, textAlign: 'center' },
   fila: {
     flexDirection: 'row',
     justifyContent: 'space-between',

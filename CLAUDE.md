@@ -23,7 +23,7 @@ App Expo → https://cuerpro.sistemascloud.ar/api.php
 - Asistencia: "voy/no voy" lo marca cada uno; `asistio` solo lo marca un coach y suma 10 puntos.
 - Récord: superar tu propio peso máximo en un ejercicio (la primera vez no cuenta), 15 puntos, una vez por ejercicio por día.
 - Niveles por mes (temporada `YYYY-MM`): Bronce 0, Plata 100, Oro 200, Platino 300, Diamante 380; nivel = máx(nivel por puntos del mes, nivel del mes anterior − 1). Nivel general, suma todos los grupos.
-- Aviso de músculo abandonado: 5 días por defecto; el coach lo elige en Grupos (3 a 10 días). Se muestra en Hoy y en Progreso.
+- Aviso de músculo sin entrenar: por zona (`ZONAS` en server/index.js: piernas, espalda, pecho, hombros, brazos 7 días; abdominales 4; cardio no avisa). El coach cambia los días en Grupos (`dias_por_zona`, JSON). Se muestra en Hoy y Progreso. Ojo: en schema.sql no poner ";" en comentarios.
 - Si decís "no voy", la API devuelve `objetivo`: cuántas asistencias te faltan para el próximo nivel y cuántos entrenamientos quedan en el mes.
 - Encuentros: se generan del horario fijo (`cuerpro_horarios`, cada día con su hora) al pedir `encuentro_proximo`; el día del plan rota en orden. Hora en `TZ=America/Argentina/Cordoba`.
 - El coach puede mover (`encuentro_mover`, guarda `fecha_original`), cancelar (`encuentro_cancelar`) o agregar (`encuentro_agregar`) un encuentro puntual sin tocar el horario fijo; se avisa al grupo por push.

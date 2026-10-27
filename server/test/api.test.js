@@ -222,6 +222,15 @@ test('horarios distintos por día, mover, cancelar y agregar encuentros', { skip
   await api('confirmar', { encuentro_id: ex, va: 1, nota: '' }, amigo.token);
   assert.equal(await nota(), null);
 
+  // Aviso por zona: defaults y lo que cambia el coach (lo inválido se ignora)
+  let det = await api('grupo_detalle', { grupo_id: grupoId }, amigo.token);
+  assert.equal(det.grupo.dias_por_zona.piernas, 7);
+  assert.equal(det.grupo.dias_por_zona.abdominales, 4);
+  assert.equal((await api('grupo_config', { grupo_id: grupoId, dias_por_zona: { piernas: 3, pecho: 99 } }, coach.token)).ok, true);
+  det = await api('grupo_detalle', { grupo_id: grupoId }, amigo.token);
+  assert.equal(det.grupo.dias_por_zona.piernas, 3);
+  assert.equal(det.grupo.dias_por_zona.pecho, 7);
+
   // El coach crea un ejercicio propio del grupo
   const ej = await api('ejercicio_crear', { grupo_id: grupoId, nombre: 'Remo en TRX', musculo_principal: 'espalda', equipo: 'otro' }, coach.token);
   assert.equal(ej.ok, true, ej.error);

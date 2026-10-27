@@ -37,6 +37,27 @@ pool.on('connection', conn => conn.query("SET time_zone = '-03:00'"));
 const CARGAS = ['liviano', 'moderado', 'pesado'];
 const UNIONES = ['superserie', 'circuito'];
 
+// Zonas para el aviso de músculo sin entrenar, con los días por defecto.
+// El cardio no avisa: suele ser entrada en calor.
+const ZONAS = {
+  piernas:     { musculos: ['cuadriceps', 'isquios', 'gluteos', 'gemelos'], dias: 7 },
+  espalda:     { musculos: ['espalda'], dias: 7 },
+  pecho:       { musculos: ['pecho'], dias: 7 },
+  hombros:     { musculos: ['hombros'], dias: 7 },
+  brazos:      { musculos: ['biceps', 'triceps'], dias: 7 },
+  abdominales: { musculos: ['abdominales'], dias: 4 },
+};
+const ZONA_DE = Object.fromEntries(
+  Object.entries(ZONAS).flatMap(([zona, z]) => z.musculos.map(m => [m, zona]))
+);
+
+// Días por zona de un grupo: lo que guardó el coach y, si falta, el default
+function diasPorZona(grupo) {
+  let propios = {};
+  try { propios = JSON.parse(grupo.dias_por_zona || '{}'); } catch {}
+  return Object.fromEntries(Object.entries(ZONAS).map(([zona, z]) => [zona, Number(propios[zona]) || z.dias]));
+}
+
 const COLUMNAS_NUEVAS = [
   ['cuerpro_encuentros', 'fecha_original', 'DATETIME DEFAULT NULL AFTER dia_id'],
   ['cuerpro_encuentros', 'cancelado', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER fecha_original'],
@@ -46,6 +67,7 @@ const COLUMNAS_NUEVAS = [
   ['cuerpro_plan_ejercicios', 'nota', 'VARCHAR(200) DEFAULT NULL AFTER descanso_seg'],
   ['cuerpro_plan_ejercicios', 'union_siguiente', "ENUM('superserie','circuito') DEFAULT NULL AFTER nota"],
   // Antes cada guardado dejaba la versión anterior inactiva: esas pasan a archivadas
+  ['cuerpro_grupos', 'dias_por_zona', 'VARCHAR(255) DEFAULT NULL AFTER dias_aviso_musculo'],
   ['cuerpro_planes', 'archivado', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER publicado',
    'UPDATE cuerpro_planes SET archivado = 1 WHERE activo = 0'],
 ];
@@ -54,6 +76,7 @@ async function initTables() {
   const sql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8')
     .split('\n')
     .filter(line => !line.trim().startsWith('--'))
+    .map(line => line.replace(/\s--\s.*$/, '')) // comentarios al final de la línea (pueden tener ";")
     .join('\n');
   const statements = sql.split(';').map(s => s.trim()).filter(Boolean);
 
@@ -671,7 +694,7 @@ const acciones = {
       'SELECT id, dia_semana, TIME_FORMAT(hora, "%H:%i") AS hora FROM cuerpro_horarios WHERE grupo_id = ? ORDER BY dia_semana, hora',
       [grupoId]
     );
-    return { grupo, miembros, horarios };
+    return { grupo: { ...grupo, dias_por_zona: diasPorZona(grupo) }, miembros, horarios };
   },
 
   async grupo_config(req) {
@@ -681,8 +704,16 @@ const acciones = {
     const campos = {};
     const quienEdita = getParam(req, 'quien_edita');
     if (quienEdita === 'todos' || quienEdita === 'algunos') campos.quien_edita = quienEdita;
-    const dias = Number(getParam(req, 'dias_aviso_musculo'));
-    if (dias > 0) campos.dias_aviso_musculo = dias;
+    const porZona = getParam(req, 'dias_por_zona');
+    if (porZona) {
+      const datos = typeof porZona === 'string' ? JSON.parse(porZona) : porZona;
+      const limpio = {};
+      for (const zona of Object.keys(ZONAS)) {
+        const n = Math.round(Number(datos[zona]));
+        if (n >= 2 && n <= 30) limpio[zona] = n;
+      }
+      campos.dias_por_zona = JSON.stringify(limpio);
+    }
     for (const k of ['ranking_grupo', 'ranking_global']) {
       const v = getParam(req, k);
       if (v !== undefined) campos[k] = v === true || v === '1' || v === 1 ? 1 : 0;
@@ -1107,15 +1138,26 @@ const acciones = {
        WHERE s.usuario_id = ? GROUP BY e.musculo_principal ORDER BY dias DESC`,
       [usuarioId]
     );
-    const [[conf]] = await pool.query(
-      `SELECT MIN(g.dias_aviso_musculo) AS dias FROM cuerpro_grupos g
+    // Si estás en varios grupos, vale el aviso más corto de cada zona
+    const [grupos] = await pool.query(
+      `SELECT g.dias_por_zona FROM cuerpro_grupos g
        JOIN cuerpro_miembros m ON m.grupo_id = g.id WHERE m.usuario_id = ?`,
       [usuarioId]
     );
-    const limite = conf?.dias || 5;
-    const avisos = musculos
-      .filter(m => m.dias >= limite)
-      .map(m => ({ musculo: m.musculo, dias: m.dias, texto: `Hace ${m.dias} días que no trabajás ${m.musculo}` }));
+    const limites = {};
+    for (const g of grupos.length ? grupos : [{}]) {
+      for (const [zona, dias] of Object.entries(diasPorZona(g))) limites[zona] = Math.min(limites[zona] ?? dias, dias);
+    }
+    // Por zona cuenta el músculo trabajado más recientemente
+    const porZona = {};
+    for (const m of musculos) {
+      const zona = ZONA_DE[m.musculo];
+      if (zona && (porZona[zona] === undefined || m.dias < porZona[zona])) porZona[zona] = m.dias;
+    }
+    const avisos = Object.entries(porZona)
+      .filter(([zona, dias]) => dias >= limites[zona])
+      .sort((a, b) => b[1] - a[1])
+      .map(([zona, dias]) => ({ musculo: zona, dias, texto: `Hace ${dias} días que no hacés ${zona}` }));
 
     const [records] = await pool.query(
       `SELECT e.id AS ejercicio_id, e.nombre, MAX(s.peso) AS mejor_peso, COUNT(*) AS series
