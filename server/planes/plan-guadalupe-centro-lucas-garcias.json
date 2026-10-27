@@ -15,7 +15,7 @@
         { "nombre": "Puente de glúteos + abducción con banda", "series": 3, "repeticiones": "15", "nota": "Core. Progresión 15 → 16 → 18 → 20", "musculo": "gluteos", "equipo": "otro", "union_siguiente": "circuito" },
         { "nombre": "Pallof press + círculos", "series": 3, "repeticiones": "15", "nota": "Core. Progresión 15 → 16 → 18 → 20", "musculo": "abdominales", "equipo": "polea" },
 
-        { "nombre": "Extensión de rodilla unilateral en máquina", "series": 3, "repeticiones": "10", "nota": "Fuerza. Semana 1: 3×10, sem 2: ×12, sem 3: ×8 más peso, sem 4: ×10", "musculo": "cuadriceps", "equipo": "maquina" },
+        { "nombre": "Extensión de rodilla en máquina (sube con 2, baja con 1)", "series": 3, "repeticiones": "10", "nota": "Fuerza. Subís con las dos piernas y bajás lento con una (excéntrico). Semana 1: 3×10, sem 2: ×12, sem 3: ×8 más peso, sem 4: ×10", "musculo": "cuadriceps", "equipo": "maquina" },
         { "nombre": "Llevo y traigo (alejo un pie)", "series": 3, "repeticiones": "10", "nota": "Fuerza. Progresión 10 → 12 → 8 (más peso) → 10", "musculo": "gluteos", "equipo": "otro" },
         { "nombre": "Drop jump desde cajón", "series": 3, "repeticiones": "6", "nota": "Fuerza", "musculo": "cuadriceps", "equipo": "peso_corporal" },
         { "nombre": "Hip thrust con barra", "series": 3, "repeticiones": "10", "nota": "Fuerza. Progresión 10 → 12 → 8 (más peso) → 10", "musculo": "gluteos", "equipo": "barra" },

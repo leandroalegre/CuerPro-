@@ -53,6 +53,7 @@ function Navegacion() {
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.bg } }}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="login" />
+        <Stack.Screen name="admin" />
       </Stack>
       {redirigiendo && <View style={[StyleSheet.absoluteFill, { backgroundColor: Colors.bg }]} />}
     </>

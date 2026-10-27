@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS cuerpro_usuarios (
   nombre        VARCHAR(100) NOT NULL,
   email         VARCHAR(150) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
+  superadmin    TINYINT(1) NOT NULL DEFAULT 0,
   foto_url      VARCHAR(255) DEFAULT NULL,
   created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uniq_email (email)
@@ -16,6 +17,17 @@ CREATE TABLE IF NOT EXISTS cuerpro_sesiones (
   token      VARCHAR(64) PRIMARY KEY,
   usuario_id INT NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (usuario_id) REFERENCES cuerpro_usuarios(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Código para recuperar la contraseña por email (se guarda el hash, vence a los 30 minutos)
+CREATE TABLE IF NOT EXISTS cuerpro_recuperaciones (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  usuario_id  INT NOT NULL,
+  codigo_hash CHAR(64) NOT NULL,
+  intentos    TINYINT NOT NULL DEFAULT 0,
+  vence       DATETIME NOT NULL,
+  created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (usuario_id) REFERENCES cuerpro_usuarios(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

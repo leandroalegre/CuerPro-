@@ -284,3 +284,68 @@ test('horarios distintos por día, mover, cancelar y agregar encuentros', { skip
   assert.equal((await api('plan', { grupo_id: grupoId }, amigo.token)).plan.vence, '2030-01-31');
   assert.deepEqual(rut.map(e => e.union_siguiente), ['superserie', null]);
 });
+
+test('superadmin, cambiar y recuperar contraseña', { skip: !enabled && 'Definí CUERPRO_TEST_DB=1 y DB_NAME' }, async () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  // sendmail falso: guarda el email en un archivo
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cuerpro-mail-'));
+  const buzon = path.join(dir, 'buzon.txt');
+  const sendmail = path.join(dir, 'sendmail');
+  fs.writeFileSync(sendmail, `#!/bin/sh\ncat > "${buzon}"\n`, { mode: 0o755 });
+  process.env.SENDMAIL_PATH = sendmail;
+
+  const ana = await api('registro', { nombre: 'Ana', email: 'ana@test.ar', password: 'secreto1' });
+  const jefe = await api('registro', { nombre: 'Jefe', email: 'jefe@test.ar', password: 'secreto1' });
+  assert.equal((await api('yo', {}, jefe.token)).usuario.superadmin, false);
+  assert.equal((await api('admin_resumen', {}, jefe.token)).ok, false);
+  await pool.query("UPDATE cuerpro_usuarios SET superadmin = 1 WHERE email = 'jefe@test.ar'");
+  assert.equal((await api('yo', {}, jefe.token)).usuario.superadmin, true);
+
+  const resumen = await api('admin_resumen', {}, jefe.token);
+  assert.equal(resumen.ok, true, resumen.error);
+  assert.ok(resumen.usuarios.some(u => u.email === 'ana@test.ar'));
+  assert.ok(resumen.grupos.length >= 1);
+  assert.equal(resumen.usuarios[0].password_hash, undefined);
+
+  // Blanquear: la clave vieja deja de andar, la sesión se cierra y entra con la temporal
+  const anaId = resumen.usuarios.find(u => u.email === 'ana@test.ar').id;
+  const blanqueo = await api('admin_blanquear', { usuario_id: anaId }, jefe.token);
+  assert.match(blanqueo.password, /^[a-z2-9]{8}$/);
+  assert.equal((await api('yo', {}, ana.token)).ok, false);
+  assert.equal((await api('login', { email: 'ana@test.ar', password: 'secreto1' })).ok, false);
+  const temporal = await api('login', { email: 'ana@test.ar', password: blanqueo.password });
+  assert.equal(temporal.ok, true);
+  assert.equal((await api('admin_blanquear', { usuario_id: anaId }, temporal.token)).ok, false);
+
+  // Cambiar la propia contraseña
+  assert.equal((await api('cambiar_password', { actual: 'mal', nueva: 'nueva123' }, temporal.token)).ok, false);
+  assert.equal((await api('cambiar_password', { actual: blanqueo.password, nueva: 'nueva123' }, temporal.token)).ok, true);
+  assert.equal((await api('login', { email: 'ana@test.ar', password: 'nueva123' })).ok, true);
+
+  // Recuperar por email: no revela si la cuenta existe
+  assert.equal((await api('recuperar_pedir', { email: 'nadie@test.ar' })).ok, true);
+  assert.equal(fs.existsSync(buzon), false);
+  assert.equal((await api('recuperar_pedir', { email: 'Ana@test.ar' })).ok, true);
+  const mail = fs.readFileSync(buzon, 'utf8');
+  assert.match(mail, /^To: ana@test\.ar$/m);
+  const codigo = mail.match(/es: (\d{6})/)[1];
+  assert.equal((await api('recuperar_pedir', { email: 'ana@test.ar' })).ok, false); // esperar un minuto
+  const malo = codigo === '000000' ? '111111' : '000000';
+  assert.equal((await api('recuperar_cambiar', { email: 'ana@test.ar', codigo: malo, nueva: 'otra1234' })).ok, false);
+  const listo = await api('recuperar_cambiar', { email: 'ana@test.ar', codigo, nueva: 'otra1234' });
+  assert.equal(listo.ok, true, listo.error);
+  assert.equal((await api('yo', {}, listo.token)).usuario.email, 'ana@test.ar');
+  assert.equal((await api('login', { email: 'ana@test.ar', password: 'otra1234' })).ok, true);
+  // El código no se puede usar dos veces
+  assert.equal((await api('recuperar_cambiar', { email: 'ana@test.ar', codigo, nueva: 'otra5678' })).ok, false);
+
+  // Sin sendmail avisa que pidan el blanqueo
+  process.env.SENDMAIL_PATH = path.join(dir, 'no-existe');
+  await pool.query('DELETE FROM cuerpro_recuperaciones');
+  const sinMail = await api('recuperar_pedir', { email: 'jefe@test.ar' });
+  assert.equal(sinMail.ok, false);
+  assert.match(sinMail.error, /administrador/);
+  fs.rmSync(dir, { recursive: true });
+});

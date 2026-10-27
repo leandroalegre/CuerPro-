@@ -6,6 +6,7 @@ const cors    = require('cors');
 const crypto  = require('crypto');
 const fs      = require('fs');
 const path    = require('path');
+const { spawn } = require('child_process');
 require('dotenv').config();
 
 const EJERCICIOS_BASE = require('./ejercicios-base');
@@ -69,6 +70,7 @@ const COLUMNAS_NUEVAS = [
   // Antes cada guardado dejaba la versión anterior inactiva: esas pasan a archivadas
   ['cuerpro_planes', 'vence', 'DATE DEFAULT NULL AFTER archivado'],
   ['cuerpro_grupos', 'dias_por_zona', 'VARCHAR(255) DEFAULT NULL AFTER dias_aviso_musculo'],
+  ['cuerpro_usuarios', 'superadmin', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER password_hash'],
   ['cuerpro_planes', 'archivado', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER publicado',
    'UPDATE cuerpro_planes SET archivado = 1 WHERE activo = 0'],
 ];
@@ -208,6 +210,45 @@ async function sesion(req) {
   );
   if (!rows.length) throw httpError(401, 'Sesión vencida, volvé a entrar');
   return rows[0];
+}
+
+// Superadmin: ve todos los usuarios y grupos y blanquea contraseñas.
+// Se nombra desde el servidor con scripts/hacer-superadmin.js
+async function superadmin(req) {
+  const usuario = await sesion(req);
+  const [[fila]] = await pool.query('SELECT superadmin FROM cuerpro_usuarios WHERE id = ?', [usuario.id]);
+  if (!fila?.superadmin) throw httpError(403, 'Solo el administrador puede ver esto');
+  return usuario;
+}
+
+// Contraseña temporal fácil de dictar: 8 letras y números sin 0/O ni 1/I
+function claveTemporal() {
+  const letras = 'abcdefghjkmnpqrstuvwxyz23456789';
+  return Array.from(crypto.randomBytes(8), b => letras[b % letras.length]).join('');
+}
+
+const hashCodigo = codigo => crypto.createHash('sha256').update(String(codigo)).digest('hex');
+
+// Manda un email con el sendmail del hosting (o SENDMAIL_PATH)
+function enviarMail(para, asunto, texto) {
+  if (/[\r\n]/.test(para)) return Promise.reject(new Error('Email inválido'));
+  const remitente = process.env.MAIL_FROM || 'CuerPro <no-reply@cuerpro.sistemascloud.ar>';
+  const mensaje = [
+    `From: ${remitente}`,
+    `To: ${para}`,
+    `Subject: =?UTF-8?B?${Buffer.from(asunto).toString('base64')}?=`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: 8bit',
+    '',
+    texto,
+  ].join('\n');
+  return new Promise((resolve, reject) => {
+    const p = spawn(process.env.SENDMAIL_PATH || '/usr/sbin/sendmail', ['-t', '-i']);
+    p.on('error', reject);
+    p.on('close', code => (code === 0 ? resolve() : reject(new Error(`sendmail salió con ${code}`))));
+    p.stdin.end(mensaje);
+  });
 }
 
 async function crearSesion(usuarioId) {
@@ -618,6 +659,99 @@ const acciones = {
     return {};
   },
 
+  async cambiar_password(req) {
+    const usuario = await sesion(req);
+    const [actual, nueva] = requireParams(req, 'actual', 'nueva');
+    if (String(nueva).length < 6) throw httpError(400, 'La contraseña necesita al menos 6 caracteres');
+    const [[fila]] = await pool.query('SELECT password_hash FROM cuerpro_usuarios WHERE id = ?', [usuario.id]);
+    if (!checkPassword(String(actual), fila.password_hash)) throw httpError(401, 'La contraseña actual no es correcta');
+    await pool.query('UPDATE cuerpro_usuarios SET password_hash = ? WHERE id = ?', [hashPassword(String(nueva)), usuario.id]);
+    return {};
+  },
+
+  // ── Recuperar contraseña: un código de 6 números por email, vale 30 minutos ──
+  async recuperar_pedir(req) {
+    const [email] = requireParams(req, 'email');
+    const mail = String(email).trim().toLowerCase();
+    const [[u]] = await pool.query('SELECT id, nombre, email FROM cuerpro_usuarios WHERE email = ?', [mail]);
+    // Misma respuesta exista o no la cuenta, para no revelar quién está registrado
+    if (!u) return {};
+    const [[reciente]] = await pool.query(
+      'SELECT 1 AS si FROM cuerpro_recuperaciones WHERE usuario_id = ? AND created_at > DATE_SUB(NOW(), INTERVAL 1 MINUTE)',
+      [u.id]
+    );
+    if (reciente) throw httpError(429, 'Ya te mandamos un código, esperá un minuto para pedir otro');
+    const codigo = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+    await pool.query('DELETE FROM cuerpro_recuperaciones WHERE usuario_id = ?', [u.id]);
+    await pool.query(
+      'INSERT INTO cuerpro_recuperaciones (usuario_id, codigo_hash, vence) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 30 MINUTE))',
+      [u.id, hashCodigo(codigo)]
+    );
+    try {
+      await enviarMail(u.email, `Tu código de CuerPro: ${codigo}`,
+        `Hola ${u.nombre},\n\nTu código para cambiar la contraseña de CuerPro es: ${codigo}\n\n` +
+        'Vale por 30 minutos. Si no lo pediste vos, ignorá este email.\n');
+    } catch (e) {
+      console.error('Mail error', e.message);
+      await pool.query('DELETE FROM cuerpro_recuperaciones WHERE usuario_id = ?', [u.id]);
+      throw httpError(503, 'No pudimos mandar el email. Pedile al administrador que te blanquee la contraseña.');
+    }
+    return {};
+  },
+
+  async recuperar_cambiar(req) {
+    const [email, codigo, nueva] = requireParams(req, 'email', 'codigo', 'nueva');
+    if (String(nueva).length < 6) throw httpError(400, 'La contraseña necesita al menos 6 caracteres');
+    const [[r]] = await pool.query(
+      `SELECT r.id, r.codigo_hash, r.intentos, u.id AS usuario_id FROM cuerpro_recuperaciones r
+       JOIN cuerpro_usuarios u ON u.id = r.usuario_id
+       WHERE u.email = ? AND r.vence > NOW()`,
+      [String(email).trim().toLowerCase()]
+    );
+    if (!r || r.intentos >= 5) throw httpError(400, 'El código venció, pedí uno nuevo');
+    if (r.codigo_hash !== hashCodigo(String(codigo).trim())) {
+      await pool.query('UPDATE cuerpro_recuperaciones SET intentos = intentos + 1 WHERE id = ?', [r.id]);
+      throw httpError(400, 'El código no es correcto');
+    }
+    await pool.query('UPDATE cuerpro_usuarios SET password_hash = ? WHERE id = ?', [hashPassword(String(nueva)), r.usuario_id]);
+    await pool.query('DELETE FROM cuerpro_recuperaciones WHERE usuario_id = ?', [r.usuario_id]);
+    await pool.query('DELETE FROM cuerpro_sesiones WHERE usuario_id = ?', [r.usuario_id]);
+    return { token: await crearSesion(r.usuario_id) };
+  },
+
+  // ── Superadmin ──
+  async admin_resumen(req) {
+    await superadmin(req);
+    const [usuarios] = await pool.query(
+      `SELECT u.id, u.nombre, u.email, u.superadmin, DATE_FORMAT(u.created_at, '%Y-%m-%d') AS creado,
+              (SELECT DATE_FORMAT(MAX(s.created_at), '%Y-%m-%d') FROM cuerpro_sesiones s WHERE s.usuario_id = u.id) AS ultima_entrada,
+              (SELECT GROUP_CONCAT(g.nombre ORDER BY g.nombre SEPARATOR ', ') FROM cuerpro_miembros m
+               JOIN cuerpro_grupos g ON g.id = m.grupo_id WHERE m.usuario_id = u.id) AS grupos
+       FROM cuerpro_usuarios u ORDER BY u.nombre`
+    );
+    const [grupos] = await pool.query(
+      `SELECT g.id, g.nombre, g.gym, DATE_FORMAT(g.created_at, '%Y-%m-%d') AS creado,
+              (SELECT COUNT(*) FROM cuerpro_miembros m WHERE m.grupo_id = g.id) AS miembros,
+              (SELECT GROUP_CONCAT(u.nombre ORDER BY u.nombre SEPARATOR ', ') FROM cuerpro_miembros m
+               JOIN cuerpro_usuarios u ON u.id = m.usuario_id WHERE m.grupo_id = g.id AND m.rol = 'coach') AS coaches,
+              (SELECT p.nombre FROM cuerpro_planes p WHERE p.grupo_id = g.id AND p.activo = 1 LIMIT 1) AS plan,
+              (SELECT DATE_FORMAT(p.vence, '%Y-%m-%d') FROM cuerpro_planes p WHERE p.grupo_id = g.id AND p.activo = 1 LIMIT 1) AS vence
+       FROM cuerpro_grupos g ORDER BY g.nombre`
+    );
+    return { usuarios, grupos };
+  },
+
+  // Pone una contraseña temporal y cierra las sesiones abiertas de ese usuario
+  async admin_blanquear(req) {
+    await superadmin(req);
+    const [usuarioId] = requireParams(req, 'usuario_id');
+    const clave = claveTemporal();
+    const [r] = await pool.query('UPDATE cuerpro_usuarios SET password_hash = ? WHERE id = ?', [hashPassword(clave), usuarioId]);
+    if (!r.affectedRows) throw httpError(404, 'No existe ese usuario');
+    await pool.query('DELETE FROM cuerpro_sesiones WHERE usuario_id = ?', [usuarioId]);
+    return { password: clave };
+  },
+
   async yo(req) {
     const usuario = await sesion(req);
     const [grupos] = await pool.query(
@@ -627,7 +761,8 @@ const acciones = {
        JOIN cuerpro_miembros m ON m.grupo_id = g.id WHERE m.usuario_id = ? ORDER BY g.nombre`,
       [usuario.id]
     );
-    return { usuario, grupos, nivel: await nivelDe(usuario.id) };
+    const [[{ superadmin: esAdmin }]] = await pool.query('SELECT superadmin FROM cuerpro_usuarios WHERE id = ?', [usuario.id]);
+    return { usuario: { ...usuario, superadmin: !!esAdmin }, grupos, nivel: await nivelDe(usuario.id) };
   },
 
   async push_token(req) {

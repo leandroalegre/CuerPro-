@@ -3,9 +3,10 @@
  * - Mis grupos y cuál está elegido
  * - Crear grupo o unirse con código de invitación
  * - El coach carga los horarios fijos del grupo
+ * - Mi cuenta: cambiar la contraseña y, si sos superadmin, administrar
  */
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Alert, Linking, Platform, ScrollView, Share, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo } from '../../components/ui';
@@ -32,6 +33,9 @@ export default function GruposScreen() {
   const [detalle, setDetalle] = useState<Detalle | null>(null);
   // Día de la semana → hora de ese día (cada día puede tener la suya)
   const [horas, setHoras] = useState<Record<number, string>>({});
+  const [cambiandoClave, setCambiandoClave] = useState(false);
+  const [claveActual, setClaveActual] = useState('');
+  const [claveNueva, setClaveNueva] = useState('');
 
   const cargarDetalle = useCallback(async () => {
     if (!token || !grupo) return setDetalle(null);
@@ -43,6 +47,18 @@ export default function GruposScreen() {
   }, [token, grupo]);
 
   useFocusEffect(useCallback(() => { cargarDetalle(); }, [cargarDetalle]));
+
+  const cambiarClave = async () => {
+    try {
+      await api('cambiar_password', { actual: claveActual, nueva: claveNueva }, token);
+      setCambiandoClave(false);
+      setClaveActual('');
+      setClaveNueva('');
+      Alert.alert('Listo', 'Tu contraseña cambió.');
+    } catch (e: any) {
+      Alert.alert('No se pudo', e.message);
+    }
+  };
 
   const unirse = async () => {
     try {
@@ -258,6 +274,26 @@ export default function GruposScreen() {
         <Titulo>Crear un grupo</Titulo>
         <Campo placeholder="Nombre del grupo" value={nombreNuevo} onChangeText={setNombreNuevo} />
         <Boton titulo="Crear" tipo="secundario" onPress={crear} disabled={!nombreNuevo.trim()} />
+      </Card>
+
+      <Card>
+        <Titulo>Mi cuenta</Titulo>
+        <Texto muted>{`${usuario?.nombre ?? ''} · ${usuario?.email ?? ''}`}</Texto>
+        {cambiandoClave ? (
+          <View style={{ marginTop: Spacing.sm }}>
+            <Campo placeholder="Contraseña actual" value={claveActual} onChangeText={setClaveActual} secureTextEntry />
+            <Campo placeholder="Contraseña nueva (mínimo 6)" value={claveNueva} onChangeText={setClaveNueva} secureTextEntry />
+            <View style={styles.compartir}>
+              <Boton titulo="Cancelar" tipo="secundario" onPress={() => setCambiandoClave(false)} style={{ flex: 1 }} />
+              <Boton titulo="Guardar" onPress={cambiarClave} disabled={!claveActual || claveNueva.length < 6} style={{ flex: 1 }} />
+            </View>
+          </View>
+        ) : (
+          <Boton titulo="Cambiar contraseña" tipo="secundario" onPress={() => setCambiandoClave(true)} style={{ marginTop: Spacing.sm }} />
+        )}
+        {usuario?.superadmin && (
+          <Boton titulo="Administrar usuarios y grupos" onPress={() => router.push('/admin')} style={{ marginTop: Spacing.sm }} />
+        )}
       </Card>
 
       <Boton titulo="Cerrar sesión" tipo="peligro" onPress={salir} />

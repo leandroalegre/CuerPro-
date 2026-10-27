@@ -31,7 +31,7 @@ export async function api<T = any>(
 }
 
 // ─── Tipos que devuelve la API ───────────────────────────────────────────────
-export interface Usuario { id: number; nombre: string; email: string }
+export interface Usuario { id: number; nombre: string; email: string; superadmin?: boolean }
 export interface Grupo { id: number; nombre: string; gym: string; codigo_invitacion: string; rol: 'coach' | 'miembro' }
 export interface Nivel {
   temporada: string;
