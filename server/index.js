@@ -765,6 +765,29 @@ const acciones = {
     return { usuario: { ...usuario, superadmin: !!esAdmin }, grupos, nivel: await nivelDe(usuario.id) };
   },
 
+  // Para la tarjeta "Primeros pasos": qué ya hizo el usuario en el grupo elegido
+  async primeros_pasos(req) {
+    const usuario = await sesion(req);
+    const grupoId = Number(getParam(req, 'grupo_id')) || null;
+    const [[{ grupos }]] = await pool.query('SELECT COUNT(*) AS grupos FROM cuerpro_miembros WHERE usuario_id = ?', [usuario.id]);
+    const pasos = { grupos, miembros: 0, plan: false, horarios: false, confirmo: false, entreno: false };
+    if (grupoId) {
+      await miembro(grupoId, usuario.id);
+      const [[g]] = await pool.query(
+        `SELECT (SELECT COUNT(*) FROM cuerpro_miembros WHERE grupo_id = ?) AS miembros,
+                EXISTS(SELECT 1 FROM cuerpro_planes WHERE grupo_id = ? AND activo = 1) AS plan,
+                EXISTS(SELECT 1 FROM cuerpro_horarios WHERE grupo_id = ?) AS horarios,
+                EXISTS(SELECT 1 FROM cuerpro_confirmaciones c JOIN cuerpro_encuentros e ON e.id = c.encuentro_id
+                       WHERE e.grupo_id = ? AND c.usuario_id = ? AND c.va = 1) AS confirmo`,
+        [grupoId, grupoId, grupoId, grupoId, usuario.id]
+      );
+      Object.assign(pasos, { miembros: g.miembros, plan: !!g.plan, horarios: !!g.horarios, confirmo: !!g.confirmo });
+    }
+    const [[serie]] = await pool.query('SELECT 1 AS si FROM cuerpro_series WHERE usuario_id = ? LIMIT 1', [usuario.id]);
+    pasos.entreno = !!serie;
+    return { pasos };
+  },
+
   async push_token(req) {
     const usuario = await sesion(req);
     const [token] = requireParams(req, 'push_token');

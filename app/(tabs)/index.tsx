@@ -14,6 +14,7 @@ import { Alert, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, 
 import { Boton, Campo, Card, CardDestacada, Etiqueta, Insignia, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { InstalarApp } from '../../components/InstalarApp';
+import { PrimerosPasos } from '../../components/PrimerosPasos';
 import { fraseDelDia } from '../../constants/frases';
 import { fechaLinda, useEncuentro } from '../../hooks/useEncuentro';
 import { useSesion } from '../../hooks/useSesion';
@@ -47,6 +48,7 @@ export default function HoyScreen() {
   if (!grupo) {
     return (
       <ScrollView style={pantalla.scroll} contentContainerStyle={pantalla.contenido}>
+        <PrimerosPasos />
         <Vacio texto="Todavía no estás en ningún grupo. Creá uno o unite con un código." />
         <Boton titulo="Ir a Grupos" onPress={() => router.push('/grupos')} />
       </ScrollView>
@@ -127,6 +129,7 @@ export default function HoyScreen() {
       <Etiqueta>{grupo.nombre}</Etiqueta>
       <Text style={styles.frase}>{`“${fraseDelDia()}”`}</Text>
       <InstalarApp />
+      <PrimerosPasos />
       {!!planActivo?.vence && diasParaVencer(planActivo.vence) <= 7 && (
         <CardDestacada color={Colors.warning}>
           <Insignia texto="Plan por vencer" tipo="aviso" />

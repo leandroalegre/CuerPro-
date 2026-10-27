@@ -56,6 +56,7 @@ function Navegacion() {
         <Stack.Screen name="login" />
         <Stack.Screen name="admin" />
         <Stack.Screen name="acerca" />
+        <Stack.Screen name="bienvenida" options={{ gestureEnabled: false }} />
       </Stack>
       {redirigiendo && <View style={[StyleSheet.absoluteFill, { backgroundColor: Colors.bg }]} />}
     </>

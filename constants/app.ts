@@ -1,4 +1,4 @@
-export const APP_VERSION = '0.2.4';
+export const APP_VERSION = '0.2.5';
 export const DESARROLLADOR = 'Leandro Alegre';
 export const EMAIL_DESARROLLADOR = 'leandroalegre@gmail.com';
 export const ESLOGAN = 'Solo o en grupo, siempre mejorando.';

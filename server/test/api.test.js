@@ -312,6 +312,12 @@ test('superadmin, cambiar y recuperar contraseña', { skip: !enabled && 'Definí
   const gr = (await api('yo', {}, ana.token)).grupos.find(x => x.id === g.grupo.id);
   assert.deepEqual([gr.nombre, gr.gym], ['Nuevo', 'Otro gym']);
 
+  // Primeros pasos: Ana está en un grupo sin plan, sin horarios y todavía no entrenó
+  const pp = await api('primeros_pasos', { grupo_id: g.grupo.id }, ana.token);
+  assert.equal(pp.ok, true, pp.error);
+  assert.deepEqual(pp.pasos, { grupos: 1, miembros: 2, plan: false, horarios: false, confirmo: false, entreno: false });
+  assert.equal((await api('primeros_pasos', { grupo_id: 1 }, ana.token)).ok, false);
+
   // El superadmin ve planes de grupos ajenos; los demás no
   assert.equal((await api('admin_plan', { grupo_id: 1 }, ana.token)).ok, false);
   const ajeno = await api('admin_plan', { grupo_id: 1 }, jefe.token);
