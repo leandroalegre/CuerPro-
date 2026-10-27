@@ -33,6 +33,9 @@ export default function GruposScreen() {
   const [detalle, setDetalle] = useState<Detalle | null>(null);
   // Día de la semana → hora de ese día (cada día puede tener la suya)
   const [horas, setHoras] = useState<Record<number, string>>({});
+  const [editandoNombre, setEditandoNombre] = useState(false);
+  const [nombreGrupo, setNombreGrupo] = useState('');
+  const [gymGrupo, setGymGrupo] = useState('');
   const [cambiandoClave, setCambiandoClave] = useState(false);
   const [claveActual, setClaveActual] = useState('');
   const [claveNueva, setClaveNueva] = useState('');
@@ -147,7 +150,40 @@ export default function GruposScreen() {
 
       {grupo && detalle && (
         <Card>
-          <Titulo>{grupo.nombre}</Titulo>
+          {editandoNombre ? (
+            <>
+              <Campo placeholder="Nombre del grupo" value={nombreGrupo} onChangeText={setNombreGrupo} />
+              <Campo placeholder="Gimnasio (opcional)" value={gymGrupo} onChangeText={setGymGrupo} />
+              <View style={styles.compartir}>
+                <Boton titulo="Cancelar" tipo="secundario" onPress={() => setEditandoNombre(false)} style={{ flex: 1 }} />
+                <Boton
+                  titulo="Guardar"
+                  disabled={!nombreGrupo.trim()}
+                  onPress={async () => {
+                    await cambiarGrupo('grupo_config', { nombre: nombreGrupo, gym: gymGrupo });
+                    setEditandoNombre(false);
+                  }}
+                  style={{ flex: 1 }}
+                />
+              </View>
+            </>
+          ) : (
+            <View style={styles.contador}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Titulo>{grupo.nombre}</Titulo>
+                {!!grupo.gym && <Texto muted>{grupo.gym}</Texto>}
+              </View>
+              {grupo.rol === 'coach' && (
+                <TouchableOpacity
+                  onPress={() => { setNombreGrupo(grupo.nombre); setGymGrupo(grupo.gym ?? ''); setEditandoNombre(true); }}
+                  hitSlop={10}
+                  accessibilityLabel="Cambiar el nombre del grupo"
+                >
+                  <Ionicons name="create-outline" size={22} color={Colors.accent} />
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
           <Texto muted>{`Código de invitación: ${grupo.codigo_invitacion}`}</Texto>
           <View style={styles.compartir}>
             <Boton titulo="Invitar por WhatsApp" onPress={invitarPorWhatsApp} style={{ flex: 1 }} />

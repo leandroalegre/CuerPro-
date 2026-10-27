@@ -303,6 +303,15 @@ test('superadmin, cambiar y recuperar contraseña', { skip: !enabled && 'Definí
   await pool.query("UPDATE cuerpro_usuarios SET superadmin = 1 WHERE email = 'jefe@test.ar'");
   assert.equal((await api('yo', {}, jefe.token)).usuario.superadmin, true);
 
+  // El coach cambia el nombre del grupo; un miembro no
+  const g = await api('grupo_crear', { nombre: 'Viejo', gym: 'Gym' }, jefe.token);
+  assert.equal((await api('grupo_config', { grupo_id: g.grupo.id, nombre: '  ' }, jefe.token)).ok, false);
+  assert.equal((await api('grupo_config', { grupo_id: g.grupo.id, nombre: 'Nuevo', gym: 'Otro gym' }, jefe.token)).ok, true);
+  assert.equal((await api('grupo_unirse', { codigo: g.grupo.codigo_invitacion }, ana.token)).ok, true);
+  assert.equal((await api('grupo_config', { grupo_id: g.grupo.id, nombre: 'Hackeado' }, ana.token)).ok, false);
+  const gr = (await api('yo', {}, ana.token)).grupos.find(x => x.id === g.grupo.id);
+  assert.deepEqual([gr.nombre, gr.gym], ['Nuevo', 'Otro gym']);
+
   const resumen = await api('admin_resumen', {}, jefe.token);
   assert.equal(resumen.ok, true, resumen.error);
   assert.ok(resumen.usuarios.some(u => u.email === 'ana@test.ar'));

@@ -840,6 +840,13 @@ const acciones = {
     const campos = {};
     const quienEdita = getParam(req, 'quien_edita');
     if (quienEdita === 'todos' || quienEdita === 'algunos') campos.quien_edita = quienEdita;
+    const nombre = getParam(req, 'nombre');
+    if (nombre !== undefined) {
+      if (!String(nombre).trim()) throw httpError(400, 'El grupo necesita un nombre');
+      campos.nombre = String(nombre).trim().slice(0, 100);
+    }
+    const gym = getParam(req, 'gym');
+    if (gym !== undefined) campos.gym = String(gym).trim().slice(0, 100);
     const porZona = getParam(req, 'dias_por_zona');
     if (porZona) {
       const datos = typeof porZona === 'string' ? JSON.parse(porZona) : porZona;
