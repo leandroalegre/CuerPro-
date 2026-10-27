@@ -6,7 +6,7 @@
  */
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Linking, Platform, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Linking, Platform, ScrollView, Share, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo } from '../../components/ui';
 import { APP_VERSION, DESARROLLADOR, URL_DESCARGA } from '../../constants/app';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
@@ -16,6 +16,7 @@ import { api } from '../../lib/api';
 const DIAS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
 interface Detalle {
+  grupo: { quien_edita: 'todos' | 'algunos' };
   miembros: { id: number; nombre: string; rol: string }[];
   horarios: { id: number; dia_semana: number; hora: string }[];
 }
@@ -79,6 +80,18 @@ export default function GruposScreen() {
       Alert.alert('No se pudo abrir WhatsApp', textoInvitacion()),
     );
 
+  // El coach decide si todos hacen todo o solo algunos (cada miembro se puede hacer coach)
+  const todosCoach = detalle?.grupo.quien_edita === 'todos';
+  const cambiarPermisos = async (accion: string, datos: object) => {
+    if (!grupo) return;
+    try {
+      await api(accion, { grupo_id: grupo.id, ...datos }, token);
+      await Promise.all([cargarDetalle(), recargar()]);
+    } catch (e: any) {
+      Alert.alert('No se pudo', e.message);
+    }
+  };
+
   const guardarHorarios = async () => {
     if (!grupo) return;
     const lista = Object.entries(horas).map(([d, hora]) => ({ dia_semana: Number(d), hora: hora.trim() }));
@@ -123,12 +136,36 @@ export default function GruposScreen() {
             )}
           </View>
           <Etiqueta>{`Miembros (${detalle.miembros.length})`}</Etiqueta>
-          {detalle.miembros.map(m => (
-            <View key={m.id} style={styles.fila}>
-              <Text style={styles.textoFila}>{m.nombre}</Text>
-              <Text style={styles.rol}>{m.rol}</Text>
+          {grupo.rol === 'coach' && (
+            <View style={styles.fila}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.textoFila}>Todos son coach</Text>
+                <Text style={styles.rol}>Todos pueden editar el plan, los horarios y marcar asistencia</Text>
+              </View>
+              <Switch
+                value={todosCoach}
+                onValueChange={v => cambiarPermisos('grupo_config', { quien_edita: v ? 'todos' : 'algunos' })}
+                trackColor={{ true: Colors.accent }}
+                thumbColor="#fff"
+              />
             </View>
-          ))}
+          )}
+          {detalle.miembros.map(m => {
+            const esCoach = todosCoach || m.rol === 'coach';
+            const puedeCambiar = grupo.rol === 'coach' && !todosCoach && m.id !== usuario?.id;
+            return (
+              <View key={m.id} style={styles.fila}>
+                <Text style={styles.textoFila}>{m.nombre}</Text>
+                {puedeCambiar ? (
+                  <TouchableOpacity onPress={() => cambiarPermisos('miembro_rol', { usuario_id: m.id, rol: esCoach ? 'miembro' : 'coach' })}>
+                    <Text style={[styles.rol, { color: Colors.accent }]}>{esCoach ? 'coach · quitar' : 'hacer coach'}</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.rol}>{esCoach ? 'coach' : 'miembro'}</Text>
+                )}
+              </View>
+            );
+          })}
 
           <View style={{ marginTop: Spacing.md }}>
             <Etiqueta>Horarios</Etiqueta>
@@ -198,6 +235,8 @@ const styles = StyleSheet.create({
   fila: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: Spacing.sm,
     paddingVertical: Spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,

@@ -571,7 +571,9 @@ const acciones = {
   async yo(req) {
     const usuario = await sesion(req);
     const [grupos] = await pool.query(
-      `SELECT g.id, g.nombre, g.gym, g.codigo_invitacion, m.rol FROM cuerpro_grupos g
+      // En un grupo donde todos editan, todos actúan como coach
+      `SELECT g.id, g.nombre, g.gym, g.codigo_invitacion,
+              IF(g.quien_edita = 'todos', 'coach', m.rol) AS rol FROM cuerpro_grupos g
        JOIN cuerpro_miembros m ON m.grupo_id = g.id WHERE m.usuario_id = ? ORDER BY g.nombre`,
       [usuario.id]
     );

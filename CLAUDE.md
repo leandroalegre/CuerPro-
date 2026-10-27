@@ -18,7 +18,7 @@ App Expo → https://cuerpro.sistemascloud.ar/api.php
 - Nombres de campos en español, en servidor y app (no repetir el desajuste inglés/español de TimbreWeb).
 
 ## Reglas del dominio
-- Roles por grupo: `coach` y `miembro`. Si el grupo tiene `quien_edita = 'todos'`, todos entran como coach.
+- Roles por grupo: `coach` y `miembro`. El coach hace coach a otros desde Grupos, o prende "Todos son coach" (`quien_edita = 'todos'`): ahí `yo` devuelve rol coach para todos.
 - Alternativa elegida por cualquiera vale para todo el grupo en ese encuentro (`cuerpro_cambios_encuentro`).
 - Asistencia: "voy/no voy" lo marca cada uno; `asistio` solo lo marca un coach y suma 10 puntos.
 - Récord: superar tu propio peso máximo en un ejercicio (la primera vez no cuenta), 15 puntos, una vez por ejercicio por día.
