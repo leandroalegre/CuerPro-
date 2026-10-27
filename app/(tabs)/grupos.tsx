@@ -298,7 +298,10 @@ export default function GruposScreen() {
 
       <Boton titulo="Cerrar sesión" tipo="peligro" onPress={salir} />
 
-      <Text style={styles.creditos}>{`CuerPro v${APP_VERSION}\nDesarrollado por ${DESARROLLADOR}`}</Text>
+      <TouchableOpacity onPress={() => router.push('/acerca')} hitSlop={8}>
+        <Text style={styles.creditos}>{`CuerPro v${APP_VERSION}\nDesarrollado por ${DESARROLLADOR}`}</Text>
+        <Text style={styles.acerca}>Sobre CuerPro</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -329,4 +332,5 @@ const styles = StyleSheet.create({
   horaDia: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   diaTexto: { ...Typography.label, color: Colors.textPrimary },
   creditos: { ...Typography.caption, color: Colors.textMuted, textAlign: 'center', marginTop: Spacing.lg, lineHeight: 18 },
+  acerca: { ...Typography.caption, color: Colors.accent, textAlign: 'center', marginTop: 4 },
 });

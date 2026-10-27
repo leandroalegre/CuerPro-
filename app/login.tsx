@@ -5,6 +5,7 @@
  * - Recuperar la contraseña con un código por email
  */
 import { useState } from 'react';
+import { router } from 'expo-router';
 import { Alert, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Boton, Campo, Card } from '../components/ui';
@@ -143,7 +144,9 @@ export default function LoginScreen() {
             </Text>
           </TouchableOpacity>
 
-          <Text style={styles.creditos}>{`Desarrollado por ${DESARROLLADOR} · v${APP_VERSION}`}</Text>
+          <TouchableOpacity onPress={() => router.push('/acerca')} hitSlop={8}>
+            <Text style={styles.creditos}>{`Desarrollado por ${DESARROLLADOR} · v${APP_VERSION}`}</Text>
+          </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
