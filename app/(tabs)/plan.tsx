@@ -43,6 +43,7 @@ export default function PlanScreen() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [planes, setPlanes] = useState<PlanResumen[]>([]);
   const [verId, setVerId] = useState<number | null>(null); // plan que se está mirando (null: el activo)
+  const [eligiendo, setEligiendo] = useState(false); // lista de planes abierta
   const [editaId, setEditaId] = useState<number | null>(null); // null: plan nuevo
   const [catalogo, setCatalogo] = useState<Ejercicio[]>([]);
   const [propuestas, setPropuestas] = useState<Propuesta[]>([]);
@@ -444,39 +445,77 @@ export default function PlanScreen() {
     >
       <Etiqueta>{grupo.nombre}</Etiqueta>
 
-      {(planes.length > 1 || (esCoach && planes.length > 0)) && (
-        <View style={[styles.alternativas, { marginBottom: Spacing.md }]}>
-          {planes.map(p => (
-            <Opcion key={p.id} texto={p.activo ? `${p.nombre} ✓` : p.nombre} activa={p.id === plan?.id} onPress={() => setVerId(p.id)} />
-          ))}
-          {esCoach && <Opcion texto="+ Nuevo plan" activa={false} onPress={() => empezarEdicion(true)} />}
-        </View>
-      )}
-
       {!plan && !cargando && (
         <Vacio texto={esCoach ? 'El grupo todavía no tiene plan. Armalo acá abajo.' : 'El coach todavía no armó el plan.'} />
       )}
 
       {plan && (
         <>
-          <Titulo>{plan.nombre}</Titulo>
-          {plan.activo ? (
-            <Texto muted>Es el plan activo: con este entrena el grupo.</Texto>
-          ) : (
-            <Card style={{ borderColor: Colors.warning, backgroundColor: Colors.warningBg }}>
-              <Texto>Este plan no está activo. El grupo entrena con otro.</Texto>
-              {esCoach && (
-                <View style={styles.filaBotones}>
-                  <Boton titulo="Borrar" tipo="peligro" onPress={borrar} style={{ flex: 1 }} />
-                  <Boton titulo="Usar este plan" onPress={activar} style={{ flex: 1 }} />
+          <View style={[styles.cabeceraPlan, !plan.activo && { borderLeftColor: Colors.warning }]}>
+            <View style={styles.filaTitulo}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.planNombre}>{plan.nombre}</Text>
+                <View style={styles.filaMeta}>
+                  <Text style={[styles.estado, plan.activo ? styles.estadoActivo : styles.estadoInactivo]}>
+                    {plan.activo ? 'ACTIVO' : 'SIN USAR'}
+                  </Text>
+                  <Text style={styles.mini}>
+                    {`${cuantos(plan.dias.length, 'día', 'días')} · ${cuantos(plan.dias.reduce((n, d) => n + d.ejercicios.length, 0), 'ejercicio', 'ejercicios')}`}
+                  </Text>
                 </View>
+              </View>
+              {(planes.length > 1 || esCoach) && (
+                <TouchableOpacity style={styles.cambiar} onPress={() => setEligiendo(!eligiendo)}>
+                  <Text style={styles.cambiarTexto}>{planes.length > 1 ? 'Planes' : 'Más'}</Text>
+                  <Ionicons name={eligiendo ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textPrimary} />
+                </TouchableOpacity>
               )}
-            </Card>
-          )}
+            </View>
+
+            {eligiendo && (
+              <View style={styles.listaPlanes}>
+                {planes.map(p => (
+                  <TouchableOpacity key={p.id} style={styles.filaPlan} onPress={() => { setVerId(p.id); setEligiendo(false); }}>
+                    <Ionicons
+                      name={p.id === plan.id ? 'radio-button-on' : 'radio-button-off'}
+                      size={18}
+                      color={p.id === plan.id ? Colors.accent : Colors.textMuted}
+                    />
+                    <Text style={[styles.ejNombre, { flex: 1 }]} numberOfLines={1}>{p.nombre}</Text>
+                    {!!p.activo && <Text style={[styles.estado, styles.estadoActivo]}>ACTIVO</Text>}
+                  </TouchableOpacity>
+                ))}
+                {esCoach && (
+                  <TouchableOpacity style={styles.filaPlan} onPress={() => { setEligiendo(false); empezarEdicion(true); }}>
+                    <Ionicons name="add-circle-outline" size={18} color={Colors.accent} />
+                    <Text style={[styles.ejNombre, { color: Colors.accent }]}>Nuevo plan</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+
+            {!plan.activo && (
+              <>
+                <Texto muted>El grupo entrena con otro plan.</Texto>
+                {esCoach && (
+                  <View style={styles.filaBotones}>
+                    <Boton titulo="Borrar" tipo="peligro" onPress={borrar} style={{ flex: 1 }} />
+                    <Boton titulo="Usar este plan" onPress={activar} style={{ flex: 1 }} />
+                  </View>
+                )}
+              </>
+            )}
+          </View>
+
           {plan.dias.map(d => (
             <Card key={d.id}>
-              <Etiqueta>{`Día ${d.orden}`}</Etiqueta>
-              <Text style={styles.diaNombre}>{d.nombre}</Text>
+              <View style={styles.cabeceraDia}>
+                <Text style={styles.numeroDia}>{d.orden}</Text>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.diaNombre}>{d.nombre}</Text>
+                  <Text style={styles.mini}>{cuantos(d.ejercicios.length, 'ejercicio', 'ejercicios')}</Text>
+                </View>
+              </View>
               {d.ejercicios.map((e, k) => (
                 <View key={e.plan_ejercicio_id} style={[styles.ejVista, k > 0 && d.ejercicios[k - 1].union_siguiente && styles.ejUnido]}>
                   {k > 0 && !!d.ejercicios[k - 1].union_siguiente && <MarcaUnion tipo={d.ejercicios[k - 1].union_siguiente!} />}
@@ -549,6 +588,30 @@ const styles = StyleSheet.create({
   },
   tarjetaActiva: { borderColor: Colors.accent, backgroundColor: Colors.bgMuted },
   manija: { paddingRight: Spacing.xs, paddingVertical: Spacing.xs },
+  cabeceraPlan: {
+    backgroundColor: Colors.bgCard, borderRadius: Radius.lg, padding: Spacing.md, marginBottom: Spacing.md,
+    borderWidth: 1, borderColor: Colors.border, borderLeftWidth: 4, borderLeftColor: Colors.accent,
+  },
+  planNombre: { ...Typography.titleLg, color: Colors.textPrimary },
+  filaMeta: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.xs },
+  estado: { fontSize: 11, fontWeight: '700', letterSpacing: 0.8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: Radius.full, overflow: 'hidden' },
+  estadoActivo: { color: Colors.success, backgroundColor: Colors.successBg },
+  estadoInactivo: { color: Colors.warning, backgroundColor: Colors.warningBg },
+  cambiar: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 8, paddingHorizontal: 12,
+    borderRadius: Radius.full, backgroundColor: Colors.bgMuted,
+  },
+  cambiarTexto: { ...Typography.caption, color: Colors.textPrimary, fontWeight: '600' },
+  listaPlanes: { marginTop: Spacing.md, borderTopWidth: 1, borderTopColor: Colors.border },
+  filaPlan: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.sm,
+    borderBottomWidth: 1, borderBottomColor: Colors.border,
+  },
+  cabeceraDia: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.xs },
+  numeroDia: {
+    width: 32, height: 32, borderRadius: 16, textAlign: 'center', lineHeight: 32, overflow: 'hidden',
+    backgroundColor: Colors.accentGlow, color: Colors.accent, fontWeight: '800', fontSize: 15,
+  },
   union: { ...Typography.caption, color: Colors.accent, fontWeight: '600', marginTop: Spacing.xs },
   ejUnido: { borderTopWidth: 0, paddingTop: 0 },
   ejVista: { borderTopWidth: 1, borderTopColor: Colors.border, paddingVertical: Spacing.sm },
@@ -576,6 +639,8 @@ const styles = StyleSheet.create({
   filaBotones: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md },
   propuesta: { borderTopWidth: 1, borderTopColor: Colors.border, paddingVertical: Spacing.sm, marginTop: Spacing.sm },
 });
+
+const cuantos = (n: number, uno: string, varios: string) => `${n} ${n === 1 ? uno : varios}`;
 
 // Marca que el ejercicio va junto con el siguiente
 function MarcaUnion({ tipo }: { tipo: Union }) {
