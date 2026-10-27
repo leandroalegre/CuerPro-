@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Alert, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
+import { Boton, Campo, Card, CardDestacada, Etiqueta, Insignia, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { fraseDelDia } from '../../constants/frases';
 import { fechaLinda, useEncuentro } from '../../hooks/useEncuentro';
@@ -117,11 +117,17 @@ export default function HoyScreen() {
     >
       <Etiqueta>{grupo.nombre}</Etiqueta>
       <Text style={styles.frase}>{`“${fraseDelDia()}”`}</Text>
-      {avisos.map(a => (
-        <Card key={a.musculo} style={{ borderColor: Colors.warning, backgroundColor: Colors.warningBg }}>
-          <Texto>{`${a.texto}. ¡Retomalo!`}</Texto>
-        </Card>
-      ))}
+      {avisos.length > 0 && (
+        <CardDestacada color={Colors.warning}>
+          <Insignia texto="Músculos para retomar" tipo="aviso" />
+          {avisos.map(a => (
+            <View key={a.musculo} style={styles.aviso}>
+              <Ionicons name="time-outline" size={16} color={Colors.warning} />
+              <Text style={styles.avisoTexto}>{a.texto}</Text>
+            </View>
+          ))}
+        </CardDestacada>
+      )}
 
       {error && <Vacio texto={error} />}
 
@@ -141,13 +147,21 @@ export default function HoyScreen() {
 
       {encuentro && (
         <>
-          <Card>
-            <Titulo>Próximo entrenamiento</Titulo>
-            <Texto>{fechaLinda(encuentro.fecha_hora)}</Texto>
+          <CardDestacada>
+            <View style={styles.filaInsignias}>
+              <Etiqueta>Próximo entrenamiento</Etiqueta>
+              {mia?.va === 1 && <Insignia texto="Vas" tipo="exito" />}
+              {mia?.va === 0 && <Insignia texto="No vas" tipo="peligro" />}
+            </View>
+            <Text style={styles.fecha}>{fechaLinda(encuentro.fecha_hora).split(' a las ')[0]}</Text>
+            <Text style={styles.hora}>{`${fechaLinda(encuentro.fecha_hora).split(' a las ')[1] ?? ''} hs`}</Text>
             {encuentro.fecha_original && (
               <Texto muted>{`Cambiado: era el ${fechaLinda(encuentro.fecha_original)}`}</Texto>
             )}
-            <Texto muted>{encuentro.dia ? `Toca: ${encuentro.dia.nombre}` : 'Todavía no hay plan cargado'}</Texto>
+            <View style={styles.toca}>
+              <Ionicons name="barbell-outline" size={16} color={Colors.accent} />
+              <Text style={styles.tocaTexto}>{encuentro.dia ? encuentro.dia.nombre : 'Todavía no hay plan cargado'}</Text>
+            </View>
 
             <View style={styles.fila}>
               <Boton
@@ -194,7 +208,7 @@ export default function HoyScreen() {
                 <Text style={[styles.chipTexto, { color: Colors.accent }]}>+ Agregar un entrenamiento extra</Text>
               </TouchableOpacity>
             )}
-          </Card>
+          </CardDestacada>
 
           {agenda && (
             <ElegirFecha
@@ -333,5 +347,15 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.border,
   },
   nombre: { ...Typography.body, color: Colors.textPrimary },
+  filaInsignias: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.sm },
+  fecha: { ...Typography.titleLg, color: Colors.textPrimary, textTransform: 'capitalize' },
+  hora: { fontSize: 34, fontWeight: '800', color: Colors.accent, marginBottom: Spacing.xs },
+  toca: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', marginTop: Spacing.xs,
+    paddingVertical: 6, paddingHorizontal: 12, borderRadius: Radius.full, backgroundColor: Colors.accentGlow,
+  },
+  tocaTexto: { ...Typography.body, color: Colors.textPrimary, fontWeight: '600' },
+  aviso: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.sm },
+  avisoTexto: { ...Typography.body, color: Colors.textPrimary, flex: 1, minWidth: 0 },
   frase: { ...Typography.body, color: Colors.textSecondary, fontStyle: 'italic', marginBottom: Spacing.md },
 });

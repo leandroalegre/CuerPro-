@@ -13,7 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Alert, Platform, RefreshControl, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
 import { NestableDraggableFlatList, NestableScrollContainer, ScaleDecorator } from 'react-native-draggable-flatlist';
-import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
+import { Boton, Campo, Card, CardDestacada, Etiqueta, Insignia, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useEncuentro } from '../../hooks/useEncuentro';
 import { useSesion } from '../../hooks/useSesion';
@@ -70,7 +70,11 @@ export default function EntrenarScreen() {
         <Vacio texto="No hay rutina para el próximo entrenamiento del grupo. Podés entrenar por tu cuenta." />
       ) : (
         <>
-          <Etiqueta>{encuentro.dia?.nombre}</Etiqueta>
+          <CardDestacada>
+            <Insignia texto="Toca hoy" />
+            <Text style={styles.diaTitulo}>{encuentro.dia?.nombre}</Text>
+            <Text style={styles.diaMeta}>{`${encuentro.rutina.length} ejercicios · arrastrá ≡ para cambiar el orden`}</Text>
+          </CardDestacada>
           <ListaRutina rutina={encuentro.rutina} encuentroId={encuentro.id} onCambio={recargar} />
         </>
       ))}
@@ -93,7 +97,11 @@ export default function EntrenarScreen() {
             </Card>
           )}
           {historial?.recomendado && (
-            <Texto>{`Te recomendamos: ${historial.recomendado.nombre}. ${historial.recomendado.texto}.`}</Texto>
+            <CardDestacada>
+              <Insignia texto="Te recomendamos" />
+              <Text style={styles.diaTitulo}>{historial.recomendado.nombre}</Text>
+              <Text style={styles.diaMeta}>{historial.recomendado.texto}</Text>
+            </CardDestacada>
           )}
           <Texto muted>Elegí qué día del plan hacés. Tus series y récords suman igual.</Texto>
           <View style={styles.modos}>
@@ -342,6 +350,8 @@ function Descanso({ fin, onTerminar }: { fin: number; onTerminar: () => void }) 
 }
 
 const styles = StyleSheet.create({
+  diaTitulo: { ...Typography.titleLg, color: Colors.textPrimary, marginTop: Spacing.sm },
+  diaMeta: { ...Typography.caption, color: Colors.textSecondary, marginTop: 2 },
   filaHistorial: { flexDirection: 'row', gap: Spacing.sm, paddingVertical: 4 },
   fechaHistorial: { ...Typography.caption, color: Colors.textSecondary, width: 72 },
   textoHistorial: { ...Typography.body, color: Colors.textPrimary, flex: 1, minWidth: 0 },
