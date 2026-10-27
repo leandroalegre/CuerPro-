@@ -11,8 +11,10 @@
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Alert, Platform, RefreshControl, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
+import { Alert, Platform, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
 import { NestableDraggableFlatList, NestableScrollContainer, ScaleDecorator } from 'react-native-draggable-flatlist';
+// La lista va dentro del ScrollView de gesture-handler: en Android el RefreshControl tiene que ser el suyo o no scrollea
+import { RefreshControl } from 'react-native-gesture-handler';
 import { Boton, Campo, Card, CardDestacada, Etiqueta, Insignia, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useEncuentro } from '../../hooks/useEncuentro';
@@ -347,7 +349,7 @@ function EjercicioCard({
   return (
     <Card style={activo ? { borderColor: Colors.accent } : undefined}>
       <View style={styles.cabecera}>
-        <TouchableOpacity onPressIn={drag} onLongPress={drag} delayLongPress={150} accessibilityLabel="Arrastrar para mover">
+        <TouchableOpacity onPressIn={drag} disabled={activo} hitSlop={12} style={styles.manija} accessibilityLabel="Arrastrar para mover">
           <Ionicons name="reorder-three" size={26} color={Colors.textMuted} />
         </TouchableOpacity>
         <View style={{ flex: 1, minWidth: 0 }}>
@@ -441,6 +443,7 @@ function Descanso({ fin, onTerminar }: { fin: number; onTerminar: () => void }) 
 }
 
 const styles = StyleSheet.create({
+  manija: { paddingRight: Spacing.xs, paddingVertical: Spacing.xs },
   opcionCorta: {
     flexDirection: 'row', gap: Spacing.sm, padding: Spacing.sm, marginBottom: Spacing.sm,
     borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border,
