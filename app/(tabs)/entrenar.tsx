@@ -17,7 +17,8 @@ import { Boton, Campo, Card, CardDestacada, Etiqueta, Insignia, pantalla, Texto,
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useEncuentro } from '../../hooks/useEncuentro';
 import { useSesion } from '../../hooks/useSesion';
-import { api, EjercicioRutina, EQUIPO, esPorTiempo, Plan, resumenEjercicio } from '../../lib/api';
+import { aerobico, loMasAbandonado, MINUTOS, minutosTotal, ModoCorto, MODOS_CORTOS, versionCorta } from '../../lib/pocoTiempo';
+import { api, Ejercicio, EjercicioRutina, EQUIPO, esPorTiempo, Plan, resumenEjercicio } from '../../lib/api';
 
 export default function EntrenarScreen() {
   const { token, grupo } = useSesion();
@@ -27,6 +28,68 @@ export default function EntrenarScreen() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [diaId, setDiaId] = useState<number | null>(null);
   const [historial, setHistorial] = useState<Historial | null>(null);
+  // "Tengo poco tiempo"
+  const [corto, setCorto] = useState<{ modo: ModoCorto; minutos: number } | null>(null);
+  const [panelCorto, setPanelCorto] = useState(false);
+  const [datosCorto, setDatosCorto] = useState<{ plan: Plan | null; musculos: { musculo: string; dias: number }[]; cardio: Ejercicio[] } | null>(null);
+
+  const abrirPocoTiempo = async () => {
+    setPanelCorto(!panelCorto);
+    if (datosCorto || !token || !grupo) return;
+    try {
+      const [p, pr, c] = await Promise.all([
+        api<{ plan: Plan | null }>('plan', { grupo_id: grupo.id }, token),
+        api<{ musculos: { musculo: string; dias: number }[] }>('progreso', {}, token),
+        api<{ ejercicios: Ejercicio[] }>('ejercicios', { grupo_id: grupo.id }, token),
+      ]);
+      setDatosCorto({ plan: p.plan, musculos: pr.musculos, cardio: c.ejercicios.filter(e => e.musculo_principal === 'cardio') });
+    } catch {}
+  };
+
+  // La rutina que se muestra: la del día o la versión para poco tiempo
+  const armar = (base: EjercicioRutina[]): { rutina: EjercicioRutina[]; titulo: string | null } => {
+    if (!corto) return { rutina: base, titulo: null };
+    if (corto.modo === 'corta') return { rutina: versionCorta(base, corto.minutos), titulo: 'Versión corta' };
+    if (!datosCorto) return { rutina: [], titulo: null };
+    if (corto.modo === 'aerobico') return { rutina: aerobico(datosCorto.cardio, corto.minutos), titulo: 'Circuito aeróbico' };
+    const todos = datosCorto.plan?.dias.flatMap(d => d.ejercicios) ?? [];
+    const r = loMasAbandonado(todos, datosCorto.musculos, corto.minutos);
+    return r ? { rutina: r.rutina, titulo: `Lo más abandonado: ${r.zona}` } : { rutina: [], titulo: null };
+  };
+
+  const pocoTiempo = (
+    <>
+      <TouchableOpacity style={[styles.pocoTiempo, corto && styles.pocoTiempoActivo]} onPress={abrirPocoTiempo}>
+        <Ionicons name="timer-outline" size={18} color={corto ? Colors.textInverse : Colors.accent} />
+        <Text style={[styles.pocoTiempoTexto, corto && { color: Colors.textInverse }]}>
+          {corto ? `Poco tiempo: ${corto.minutos} min` : 'Tengo poco tiempo'}
+        </Text>
+      </TouchableOpacity>
+      {panelCorto && (
+        <Card>
+          <Etiqueta>¿Qué hacés?</Etiqueta>
+          <View style={styles.modos}>
+            {MODOS_CORTOS.map(m => (
+              <Modo
+                key={m.modo}
+                texto={m.modo === 'corta' ? `★ ${m.texto}` : m.texto}
+                activo={corto?.modo === m.modo}
+                onPress={() => setCorto({ modo: m.modo, minutos: corto?.minutos ?? 45 })}
+              />
+            ))}
+          </View>
+          <Etiqueta>Minutos</Etiqueta>
+          <View style={styles.modos}>
+            {MINUTOS.map(n => (
+              <Modo key={n} texto={`${n} min`} activo={corto?.minutos === n} onPress={() => setCorto({ modo: corto?.modo ?? 'corta', minutos: n })} />
+            ))}
+          </View>
+          <Texto muted>La versión corta deja los ejercicios compuestos, baja una serie y acorta la entrada en calor. Lo que hagas suma igual.</Texto>
+          {corto && <Boton titulo="Volver al plan completo" tipo="secundario" onPress={() => { setCorto(null); setPanelCorto(false); }} style={{ marginTop: Spacing.sm }} />}
+        </Card>
+      )}
+    </>
+  );
 
   // Desde Hoy, "Entrenar por mi cuenta" llega con ?modo=solo
   useFocusEffect(useCallback(() => {
@@ -71,11 +134,19 @@ export default function EntrenarScreen() {
       ) : (
         <>
           <CardDestacada>
-            <Insignia texto="Toca hoy" />
+            <Insignia texto={armar(encuentro.rutina).titulo ?? 'Toca hoy'} />
             <Text style={styles.diaTitulo}>{encuentro.dia?.nombre}</Text>
-            <Text style={styles.diaMeta}>{`${encuentro.rutina.length} ejercicios · arrastrá ≡ para cambiar el orden`}</Text>
+            <Text style={styles.diaMeta}>
+              {`${armar(encuentro.rutina).rutina.length} ejercicios · ~${minutosTotal(armar(encuentro.rutina).rutina)} min · arrastrá ≡ para cambiar el orden`}
+            </Text>
           </CardDestacada>
-          <ListaRutina rutina={encuentro.rutina} encuentroId={encuentro.id} onCambio={recargar} />
+          {pocoTiempo}
+          <ListaRutina
+            key={corto ? `${corto.modo}-${corto.minutos}` : 'plan'}
+            rutina={armar(encuentro.rutina).rutina}
+            encuentroId={encuentro.id}
+            onCambio={recargar}
+          />
         </>
       ))}
 
@@ -114,7 +185,18 @@ export default function EntrenarScreen() {
               />
             ))}
           </View>
-          {dia && <ListaRutina key={dia.id} rutina={dia.ejercicios} encuentroId={null} onCambio={() => {}} />}
+          {pocoTiempo}
+          {dia && corto && (
+            <Texto muted>{`${armar(dia.ejercicios).titulo} · ${armar(dia.ejercicios).rutina.length} ejercicios · ~${minutosTotal(armar(dia.ejercicios).rutina)} min`}</Texto>
+          )}
+          {dia && (
+            <ListaRutina
+              key={`${dia.id}-${corto ? `${corto.modo}-${corto.minutos}` : 'plan'}`}
+              rutina={armar(dia.ejercicios).rutina}
+              encuentroId={null}
+              onCambio={() => {}}
+            />
+          )}
         </>
       ))}
     </NestableScrollContainer>
@@ -350,6 +432,12 @@ function Descanso({ fin, onTerminar }: { fin: number; onTerminar: () => void }) 
 }
 
 const styles = StyleSheet.create({
+  pocoTiempo: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: Spacing.md,
+    paddingVertical: 10, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.accent,
+  },
+  pocoTiempoActivo: { backgroundColor: Colors.accent },
+  pocoTiempoTexto: { ...Typography.body, color: Colors.accent, fontWeight: '600' },
   diaTitulo: { ...Typography.titleLg, color: Colors.textPrimary, marginTop: Spacing.sm },
   diaMeta: { ...Typography.caption, color: Colors.textSecondary, marginTop: 2 },
   filaHistorial: { flexDirection: 'row', gap: Spacing.sm, paddingVertical: 4 },
