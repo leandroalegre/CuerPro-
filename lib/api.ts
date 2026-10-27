@@ -32,7 +32,8 @@ export async function api<T = any>(
 
 // ─── Tipos que devuelve la API ───────────────────────────────────────────────
 export interface Usuario { id: number; nombre: string; email: string; superadmin?: boolean }
-export interface Grupo { id: number; nombre: string; gym: string; codigo_invitacion: string; rol: 'coach' | 'miembro' }
+// individual: el espacio de cada uno para entrenar solo (sin código, horarios ni asistencia)
+export interface Grupo { id: number; nombre: string; gym: string; codigo_invitacion: string; rol: 'coach' | 'miembro'; individual?: boolean }
 export interface Nivel {
   temporada: string;
   puntos: number;

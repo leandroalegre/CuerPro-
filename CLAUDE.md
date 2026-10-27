@@ -38,7 +38,8 @@ App Expo → https://cuerpro.sistemascloud.ar/api.php
 - Superadmin (`cuerpro_usuarios.superadmin`): `admin_resumen` (todos los usuarios y grupos) y `admin_blanquear` (contraseña temporal, cierra sus sesiones). Pantalla `app/admin.tsx`, botón en Grupos → Mi cuenta. Se nombra con `cd server && node scripts/hacer-superadmin.js <email> [--quitar]`. `admin_plan` le muestra el plan de cualquier grupo (solo lectura).
 - Web instalable (PWA): `public/index.html` (plantilla de Expo con manifest y service worker), `public/manifest.webmanifest`, `public/sw.js` (no cachea nada). `components/InstalarApp.tsx` muestra "Instalá CuerPro" en Hoy.
 
-- Primer ingreso: `app/bienvenida.tsx` (una vez por usuario, elige camino solo o en grupo; solo sin grupos le crea "Mi entrenamiento"). Después `components/PrimerosPasos.tsx` en Hoy, con los datos de `primeros_pasos`; se guarda en AsyncStorage `cuerpro_inicio_<usuario>`.
+- Individual: cada usuario tiene un grupo `individual = 1` (nombre "Individual", siempre coach) que se crea al registrarse o en `yo` si falta. No tiene encuentros, código (`grupo_unirse` lo ignora) ni propuestas; Hoy muestra el día que toca y Entrenar va directo a "por mi cuenta". `yo` lo devuelve primero; la app arranca en el primer grupo real. Arriba a la derecha `components/SelectorEspacio.tsx` cambia entre Individual y grupos. `primeros_pasos.grupos` no lo cuenta.
+- Primer ingreso: `app/bienvenida.tsx` (una vez por usuario, elige camino solo o en grupo; solo lo lleva al Individual a armar el plan). Después `components/PrimerosPasos.tsx` en Hoy, con los datos de `primeros_pasos`; se guarda en AsyncStorage `cuerpro_inicio_<usuario>`.
 
 ## Pruebas
 - `cd server && CUERPRO_TEST_DB=1 DB_NAME=... npm test`: flujo completo contra MySQL (borra las tablas `cuerpro_*`).

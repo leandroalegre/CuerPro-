@@ -33,17 +33,19 @@ export async function guardarInicio(usuarioId: number, cambios: Partial<Inicio>)
 
 interface Paso { texto: string; detalle: string; hecho: boolean; ir?: Href }
 
-function armarPasos(camino: Camino, p: Pasos, esCoach: boolean): Paso[] {
+function armarPasos(camino: Camino, p: Pasos, esCoach: boolean, enIndividual: boolean): Paso[] {
   if (camino === 'solo') {
     return [
-      { texto: 'Creá tu espacio', detalle: 'Un grupo donde estás solo vos', hecho: p.grupos > 0, ir: '/grupos' },
+      { texto: 'Tu espacio Individual', detalle: 'Ya lo tenés: solo vos, con tu propio plan', hecho: true },
       { texto: 'Armá tu plan', detalle: 'Los días y ejercicios que vas a hacer', hecho: p.plan, ir: '/plan' },
-      { texto: 'Entrená', detalle: 'En Entrenar → "Por mi cuenta", anotá tu primera serie', hecho: p.entreno, ir: '/entrenar' },
+      { texto: 'Entrená', detalle: 'En Entrenar elegí el día y anotá tu primera serie', hecho: p.entreno, ir: '/entrenar' },
     ];
   }
   const pasos: Paso[] = [
     { texto: 'Sumate a tu grupo', detalle: 'Con el código que te pasaron, o creá uno', hecho: p.grupos > 0, ir: '/grupos' },
   ];
+  // Lo que sigue es del grupo: desde el Individual todavía no aplica
+  if (enIndividual) return pasos;
   if (esCoach) {
     pasos.push(
       { texto: 'Invitá a tus amigos', detalle: 'Mandales el código por WhatsApp desde Grupos', hecho: p.miembros > 1, ir: '/grupos' },
@@ -61,7 +63,7 @@ function armarPasos(camino: Camino, p: Pasos, esCoach: boolean): Paso[] {
 }
 
 export function PrimerosPasos() {
-  const { token, usuario, grupo } = useSesion();
+  const { token, usuario, grupo, grupos, elegirGrupo } = useSesion();
   const [inicio, setInicio] = useState<Inicio | null>(null);
   const [pasos, setPasos] = useState<Pasos | null>(null);
 
@@ -78,8 +80,11 @@ export function PrimerosPasos() {
   }, [token, usuario?.id, grupo?.id]));
 
   if (!usuario || !inicio?.visto || inicio.cerrado || !pasos) return null;
-  const camino: Camino = inicio.camino ?? (grupo && pasos.miembros <= 1 ? 'solo' : 'grupo');
-  const lista = armarPasos(camino, pasos, grupo?.rol === 'coach');
+  // Mirando un grupo de verdad, los pasos son los del grupo aunque haya elegido entrenar solo
+  const enIndividual = !!grupo?.individual;
+  const camino: Camino = !enIndividual ? 'grupo' : inicio.camino ?? (pasos.grupos ? 'grupo' : 'solo');
+  if (enIndividual && camino === 'grupo' && pasos.grupos > 0) return null;
+  const lista = armarPasos(camino, pasos, grupo?.rol === 'coach', enIndividual);
   const hechos = lista.filter(p => p.hecho).length;
   if (hechos === lista.length) return null;
 
@@ -121,9 +126,15 @@ export function PrimerosPasos() {
           {!p.hecho && !!p.ir && <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />}
         </TouchableOpacity>
       ))}
-      <TouchableOpacity onPress={() => router.push('/bienvenida')}>
-        <Text style={styles.cambiar}>{camino === 'solo' ? '¿Entrenás con amigos? Cambiá a "en grupo"' : '¿Entrenás solo? Cambiá el camino'}</Text>
-      </TouchableOpacity>
+      {enIndividual ? (
+        <TouchableOpacity onPress={() => router.push('/bienvenida')}>
+          <Text style={styles.cambiar}>{camino === 'solo' ? '¿Entrenás con amigos? Cambiá a "en grupo"' : '¿Entrenás solo? Cambiá el camino'}</Text>
+        </TouchableOpacity>
+      ) : (
+        <TouchableOpacity onPress={() => { const ind = grupos.find(g => g.individual); if (ind) elegirGrupo(ind.id); }}>
+          <Text style={styles.cambiar}>¿También entrenás solo? Pasá a tu Individual</Text>
+        </TouchableOpacity>
+      )}
     </Card>
   );
 }

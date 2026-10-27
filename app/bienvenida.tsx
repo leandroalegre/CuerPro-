@@ -7,14 +7,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Camino, guardarInicio } from '../components/PrimerosPasos';
 import { Boton } from '../components/ui';
 import { ESLOGAN } from '../constants/app';
 import { Colors, Radius, Spacing, Typography } from '../constants/theme';
 import { useSesion } from '../hooks/useSesion';
-import { api } from '../lib/api';
 
 const PASOS: Record<Camino, { icono: keyof typeof Ionicons.glyphMap; texto: string }[]> = {
   grupo: [
@@ -25,19 +24,20 @@ const PASOS: Record<Camino, { icono: keyof typeof Ionicons.glyphMap; texto: stri
     { icono: 'trophy', texto: 'Sumás puntos por ir y por superar tus marcas, y subís de nivel cada mes.' },
   ],
   solo: [
-    { icono: 'person', texto: 'Te creamos tu espacio: un grupo donde estás solo vos.' },
+    { icono: 'person', texto: 'Ya tenés tu espacio Individual: solo vos, con tu propio plan.' },
     { icono: 'list', texto: 'Armás tu plan en Plan: los días y los ejercicios.' },
-    { icono: 'barbell', texto: 'En Entrenar → "Por mi cuenta" elegís el día y anotás cada serie.' },
+    { icono: 'barbell', texto: 'En Entrenar elegís el día del plan y anotás cada serie, cuando quieras.' },
     { icono: 'trophy', texto: 'Ves tu progreso, tus récords y tu nivel del mes.' },
-    { icono: 'people', texto: 'Si después se suman amigos, les pasás el código y entrenan juntos.' },
+    { icono: 'people', texto: 'Si después querés entrenar con amigos, creás un grupo en Grupos. Arriba cambiás entre Individual y tus grupos.' },
   ],
 };
 
 export default function BienvenidaScreen() {
-  const { token, usuario, grupos, recargar } = useSesion();
+  const { usuario, grupos, elegirGrupo } = useSesion();
   const [paso, setPaso] = useState(0);
   const [camino, setCamino] = useState<Camino | null>(null);
-  const [cargando, setCargando] = useState(false);
+  const individual = grupos.find(g => g.individual);
+  const deVerdad = grupos.filter(g => !g.individual);
 
   const terminar = async (destino: '/' | '/grupos' | '/plan') => {
     if (usuario) await guardarInicio(usuario.id, { visto: true, camino, cerrado: false });
@@ -45,19 +45,9 @@ export default function BienvenidaScreen() {
   };
 
   const empezar = async () => {
-    if (camino === 'grupo') return terminar(grupos.length ? '/' : '/grupos');
-    // Solo: si no tiene ningún grupo, le creamos su espacio y lo mandamos a armar el plan
-    if (!grupos.length) {
-      setCargando(true);
-      try {
-        await api('grupo_crear', { nombre: 'Mi entrenamiento' }, token);
-        await recargar();
-      } catch (e: any) {
-        Alert.alert('No se pudo', e.message);
-        return setCargando(false);
-      }
-      setCargando(false);
-    }
+    if (camino === 'grupo') return terminar(deVerdad.length ? '/' : '/grupos');
+    // Solo: al Individual (ya existe desde el registro) a armar el plan
+    if (individual) await elegirGrupo(individual.id);
     terminar('/plan');
   };
 
@@ -116,9 +106,8 @@ export default function BienvenidaScreen() {
               En Hoy te va a quedar una tarjeta de "Primeros pasos" que se tilda sola a medida que avanzás.
             </Text>
             <Boton
-              titulo={camino === 'grupo' ? (grupos.length ? 'Ir a Hoy' : 'Sumarme o crear el grupo') : grupos.length ? 'Armar mi plan' : 'Crear mi espacio'}
+              titulo={camino === 'grupo' ? (deVerdad.length ? 'Ir a Hoy' : 'Sumarme o crear el grupo') : 'Armar mi plan'}
               onPress={empezar}
-              cargando={cargando}
               style={{ marginTop: Spacing.md }}
             />
           </>

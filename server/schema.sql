@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS cuerpro_grupos (
   codigo_invitacion  VARCHAR(12)  NOT NULL,
   -- 'todos': cualquier miembro puede editar el plan; 'algunos': solo los coaches
   quien_edita        ENUM('todos','algunos') NOT NULL DEFAULT 'algunos',
+  -- 1: espacio Individual de un usuario (para entrenar solo, nadie más se suma)
+  individual         TINYINT(1) NOT NULL DEFAULT 0,
   dias_aviso_musculo INT NOT NULL DEFAULT 5,  -- ya no se usa: ver dias_por_zona
   dias_por_zona VARCHAR(255) DEFAULT NULL,    -- JSON {piernas: 7, ...}, lo que falta usa ZONAS
   ranking_grupo      TINYINT(1) NOT NULL DEFAULT 0,

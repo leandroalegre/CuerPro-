@@ -7,6 +7,7 @@
  * - Cada uno puede arrastrar las tarjetas para hacer los ejercicios en otro orden
  * - Por mi cuenta: cualquier día del plan, fuera del encuentro; las series y
  *   los récords cuentan igual, la asistencia no
+ * - En el Individual siempre es "por mi cuenta"
  */
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
@@ -24,10 +25,13 @@ export default function EntrenarScreen() {
   const { token, grupo } = useSesion();
   const { encuentro, recargar } = useEncuentro();
   const params = useLocalSearchParams<{ modo?: string }>();
-  const [solo, setSolo] = useState(false);
+  const [soloElegido, setSolo] = useState(false);
+  const solo = soloElegido || !!grupo?.individual;
   const [plan, setPlan] = useState<Plan | null>(null);
   const [diaId, setDiaId] = useState<number | null>(null);
   const [historial, setHistorial] = useState<Historial | null>(null);
+  // Al cambiar de grupo (o al Individual) el día elegido era de otro plan
+  useEffect(() => { setDiaId(null); setPlan(null); setHistorial(null); }, [grupo?.id]);
   // "Tengo poco tiempo"
   const [corto, setCorto] = useState<{ modo: ModoCorto; minutos: number } | null>(null);
   const [panelCorto, setPanelCorto] = useState(false);
@@ -132,10 +136,12 @@ export default function EntrenarScreen() {
       // Los datos se recargan solos cada vez que entrás a la pestaña.
       keyboardShouldPersistTaps="handled"
     >
-      <View style={styles.modos}>
-        <Modo texto="Con el grupo" activo={!solo} onPress={() => setSolo(false)} />
-        <Modo texto="Por mi cuenta" activo={solo} onPress={() => setSolo(true)} />
-      </View>
+      {!grupo?.individual && (
+        <View style={styles.modos}>
+          <Modo texto="Con el grupo" activo={!solo} onPress={() => setSolo(false)} />
+          <Modo texto="Por mi cuenta" activo={solo} onPress={() => setSolo(true)} />
+        </View>
+      )}
 
       {!solo && (!encuentro ? (
         <Vacio texto="El grupo todavía no tiene días y horarios. El coach los carga en Grupos. Mientras, podés entrenar por tu cuenta." />
@@ -163,7 +169,9 @@ export default function EntrenarScreen() {
       {solo && (!grupo ? (
         <Vacio texto="Para entrenar por tu cuenta necesitás un plan: creá un grupo propio en Grupos (puede ser solo vos) y armalo en Plan." />
       ) : !plan?.dias.length ? (
-        <Vacio texto="Tu grupo todavía no tiene plan. Cuando el coach lo arme, vas a poder entrenar cualquier día por tu cuenta." />
+        <Vacio texto={grupo.individual
+          ? 'Todavía no armaste tu plan. Armalo en la pestaña Plan y después entrenás cuando quieras.'
+          : 'Tu grupo todavía no tiene plan. Cuando el coach lo arme, vas a poder entrenar cualquier día por tu cuenta.'} />
       ) : (
         <>
           {!!historial?.entrenamientos.length && (

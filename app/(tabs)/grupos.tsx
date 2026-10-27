@@ -1,6 +1,6 @@
 /**
  * Pantalla GRUPOS
- * - Mis grupos y cuál está elegido
+ * - Mis grupos y cuál está elegido (el Individual es para entrenar solo)
  * - Crear grupo o unirse con código de invitación
  * - El coach carga los horarios fijos del grupo
  * - Mi cuenta: cambiar la contraseña y, si sos superadmin, administrar
@@ -142,7 +142,7 @@ export default function GruposScreen() {
           {grupos.map(g => (
             <TouchableOpacity key={g.id} style={styles.fila} onPress={() => elegirGrupo(g.id)}>
               <Text style={[styles.textoFila, g.id === grupo?.id && { color: Colors.accent }]}>{g.nombre}</Text>
-              <Text style={styles.rol}>{g.rol}</Text>
+              <Text style={styles.rol}>{g.individual ? 'solo vos' : g.rol}</Text>
             </TouchableOpacity>
           ))}
         </Card>
@@ -150,7 +150,12 @@ export default function GruposScreen() {
 
       {grupo && detalle && (
         <Card>
-          {editandoNombre ? (
+          {grupo.individual ? (
+            <>
+              <Titulo>Individual</Titulo>
+              <Texto muted>Tu espacio para entrenar solo, con tu propio plan. Nadie más lo ve. Tus series, récords y puntos suman a tu nivel.</Texto>
+            </>
+          ) : editandoNombre ? (
             <>
               <Campo placeholder="Nombre del grupo" value={nombreGrupo} onChangeText={setNombreGrupo} />
               <Campo placeholder="Gimnasio (opcional)" value={gymGrupo} onChangeText={setGymGrupo} />
@@ -184,6 +189,7 @@ export default function GruposScreen() {
               )}
             </View>
           )}
+          {!grupo.individual && (<>
           <Texto muted>{`Código de invitación: ${grupo.codigo_invitacion}`}</Texto>
           <View style={styles.compartir}>
             <Boton titulo="Invitar por WhatsApp" onPress={invitarPorWhatsApp} style={{ flex: 1 }} />
@@ -222,6 +228,7 @@ export default function GruposScreen() {
               </View>
             );
           })}
+          </>)}
 
           <View style={{ marginTop: Spacing.md }}>
             <Etiqueta>Aviso de músculo sin entrenar</Etiqueta>
@@ -255,7 +262,7 @@ export default function GruposScreen() {
             })}
           </View>
 
-          <View style={{ marginTop: Spacing.md }}>
+          {!grupo.individual && <View style={{ marginTop: Spacing.md }}>
             <Etiqueta>Horarios</Etiqueta>
             {grupo.rol === 'coach' ? (
               <>
@@ -296,7 +303,7 @@ export default function GruposScreen() {
                   : 'Sin horarios todavía'}
               </Texto>
             )}
-          </View>
+          </View>}
         </Card>
       )}
 
@@ -308,6 +315,7 @@ export default function GruposScreen() {
 
       <Card>
         <Titulo>Crear un grupo</Titulo>
+        <Texto muted>Para entrenar con amigos: vos sos el coach y les pasás el código.</Texto>
         <Campo placeholder="Nombre del grupo" value={nombreNuevo} onChangeText={setNombreNuevo} />
         <Boton titulo="Crear" tipo="secundario" onPress={crear} disabled={!nombreNuevo.trim()} />
       </Card>

@@ -71,6 +71,10 @@ const COLUMNAS_NUEVAS = [
   ['cuerpro_planes', 'vence', 'DATE DEFAULT NULL AFTER archivado'],
   ['cuerpro_grupos', 'dias_por_zona', 'VARCHAR(255) DEFAULT NULL AFTER dias_aviso_musculo'],
   ['cuerpro_usuarios', 'superadmin', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER password_hash'],
+  // Los "Mi entrenamiento" que creaba la bienvenida para entrenar solo pasan a ser el espacio Individual
+  ['cuerpro_grupos', 'individual', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER quien_edita',
+   `UPDATE cuerpro_grupos g SET g.individual = 1, g.nombre = 'Individual'
+    WHERE g.nombre = 'Mi entrenamiento' AND (SELECT COUNT(*) FROM cuerpro_miembros m WHERE m.grupo_id = g.id) = 1`],
   ['cuerpro_planes', 'archivado', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER publicado',
    'UPDATE cuerpro_planes SET archivado = 1 WHERE activo = 0'],
 ];
@@ -278,6 +282,33 @@ async function puedeEditarPlan(grupoId, usuarioId) {
   if (grupo.rol !== 'coach' && grupo.quien_edita !== 'todos')
     throw httpError(403, 'Solo los coaches pueden editar el plan');
   return grupo;
+}
+
+// Cada usuario tiene un espacio Individual: un grupo donde está solo él, siempre como coach.
+// Si no lo tiene (usuarios de antes), se crea acá.
+async function espacioIndividual(usuarioId) {
+  const [[ya]] = await pool.query(
+    `SELECT g.id FROM cuerpro_grupos g JOIN cuerpro_miembros m ON m.grupo_id = g.id
+     WHERE m.usuario_id = ? AND g.individual = 1 ORDER BY g.id LIMIT 1`,
+    [usuarioId]
+  );
+  if (ya) return ya.id;
+  const [r] = await pool.query(
+    "INSERT INTO cuerpro_grupos (nombre, codigo_invitacion, individual) VALUES ('Individual', ?, 1)",
+    [await codigoLibre()]
+  );
+  await pool.query("INSERT INTO cuerpro_miembros (grupo_id, usuario_id, rol) VALUES (?, ?, 'coach')", [r.insertId, usuarioId]);
+  return r.insertId;
+}
+
+async function codigoLibre() {
+  let codigo;
+  for (let i = 0; i < 5; i++) {
+    codigo = nuevoCodigo();
+    const [ya] = await pool.query('SELECT id FROM cuerpro_grupos WHERE codigo_invitacion = ?', [codigo]);
+    if (!ya.length) break;
+  }
+  return codigo;
 }
 
 async function sumarPuntos(usuarioId, grupoId, motivo, referencia) {
@@ -637,6 +668,7 @@ const acciones = {
       'INSERT INTO cuerpro_usuarios (nombre, email, password_hash) VALUES (?, ?, ?)',
       [String(nombre).trim(), mail, hashPassword(String(password))]
     );
+    await espacioIndividual(r.insertId);
     return { token: await crearSesion(r.insertId), usuario: { id: r.insertId, nombre, email: mail } };
   },
 
@@ -726,17 +758,17 @@ const acciones = {
       `SELECT u.id, u.nombre, u.email, u.superadmin, DATE_FORMAT(u.created_at, '%Y-%m-%d') AS creado,
               (SELECT DATE_FORMAT(MAX(s.created_at), '%Y-%m-%d') FROM cuerpro_sesiones s WHERE s.usuario_id = u.id) AS ultima_entrada,
               (SELECT GROUP_CONCAT(g.nombre ORDER BY g.nombre SEPARATOR ', ') FROM cuerpro_miembros m
-               JOIN cuerpro_grupos g ON g.id = m.grupo_id WHERE m.usuario_id = u.id) AS grupos
+               JOIN cuerpro_grupos g ON g.id = m.grupo_id WHERE m.usuario_id = u.id AND g.individual = 0) AS grupos
        FROM cuerpro_usuarios u ORDER BY u.nombre`
     );
     const [grupos] = await pool.query(
-      `SELECT g.id, g.nombre, g.gym, DATE_FORMAT(g.created_at, '%Y-%m-%d') AS creado,
+      `SELECT g.id, g.nombre, g.gym, g.individual, DATE_FORMAT(g.created_at, '%Y-%m-%d') AS creado,
               (SELECT COUNT(*) FROM cuerpro_miembros m WHERE m.grupo_id = g.id) AS miembros,
               (SELECT GROUP_CONCAT(u.nombre ORDER BY u.nombre SEPARATOR ', ') FROM cuerpro_miembros m
                JOIN cuerpro_usuarios u ON u.id = m.usuario_id WHERE m.grupo_id = g.id AND m.rol = 'coach') AS coaches,
               (SELECT p.nombre FROM cuerpro_planes p WHERE p.grupo_id = g.id AND p.activo = 1 LIMIT 1) AS plan,
               (SELECT DATE_FORMAT(p.vence, '%Y-%m-%d') FROM cuerpro_planes p WHERE p.grupo_id = g.id AND p.activo = 1 LIMIT 1) AS vence
-       FROM cuerpro_grupos g ORDER BY g.nombre`
+       FROM cuerpro_grupos g ORDER BY g.individual, g.nombre`
     );
     return { usuarios, grupos };
   },
@@ -754,13 +786,15 @@ const acciones = {
 
   async yo(req) {
     const usuario = await sesion(req);
-    const [grupos] = await pool.query(
-      // En un grupo donde todos editan, todos actúan como coach
-      `SELECT g.id, g.nombre, g.gym, g.codigo_invitacion,
-              IF(g.quien_edita = 'todos', 'coach', m.rol) AS rol FROM cuerpro_grupos g
-       JOIN cuerpro_miembros m ON m.grupo_id = g.id WHERE m.usuario_id = ? ORDER BY g.nombre`,
+    await espacioIndividual(usuario.id);
+    const [filas] = await pool.query(
+      // En un grupo donde todos editan, todos actúan como coach. El Individual va primero.
+      `SELECT g.id, g.nombre, g.gym, g.codigo_invitacion, g.individual,
+              IF(g.quien_edita = 'todos' OR g.individual = 1, 'coach', m.rol) AS rol FROM cuerpro_grupos g
+       JOIN cuerpro_miembros m ON m.grupo_id = g.id WHERE m.usuario_id = ? ORDER BY g.individual DESC, g.nombre`,
       [usuario.id]
     );
+    const grupos = filas.map(g => ({ ...g, individual: !!g.individual }));
     const [[{ superadmin: esAdmin }]] = await pool.query('SELECT superadmin FROM cuerpro_usuarios WHERE id = ?', [usuario.id]);
     return { usuario: { ...usuario, superadmin: !!esAdmin }, grupos, nivel: await nivelDe(usuario.id) };
   },
@@ -769,7 +803,8 @@ const acciones = {
   async primeros_pasos(req) {
     const usuario = await sesion(req);
     const grupoId = Number(getParam(req, 'grupo_id')) || null;
-    const [[{ grupos }]] = await pool.query('SELECT COUNT(*) AS grupos FROM cuerpro_miembros WHERE usuario_id = ?', [usuario.id]);
+    const [[{ grupos }]] = await pool.query(`SELECT COUNT(*) AS grupos FROM cuerpro_miembros m JOIN cuerpro_grupos g ON g.id = m.grupo_id
+       WHERE m.usuario_id = ? AND g.individual = 0`, [usuario.id]);
     const pasos = { grupos, miembros: 0, plan: false, horarios: false, confirmo: false, entreno: false };
     if (grupoId) {
       await miembro(grupoId, usuario.id);
@@ -806,12 +841,7 @@ const acciones = {
     const [nombre] = requireParams(req, 'nombre');
     const gym = getParam(req, 'gym') || '';
     const quienEdita = getParam(req, 'quien_edita') === 'todos' ? 'todos' : 'algunos';
-    let codigo;
-    for (let i = 0; i < 5; i++) {
-      codigo = nuevoCodigo();
-      const [ya] = await pool.query('SELECT id FROM cuerpro_grupos WHERE codigo_invitacion = ?', [codigo]);
-      if (!ya.length) break;
-    }
+    const codigo = await codigoLibre();
     const [r] = await pool.query(
       'INSERT INTO cuerpro_grupos (nombre, gym, codigo_invitacion, quien_edita) VALUES (?, ?, ?, ?)',
       [nombre, gym, codigo, quienEdita]
@@ -827,7 +857,7 @@ const acciones = {
     const usuario = await sesion(req);
     const [codigo] = requireParams(req, 'codigo');
     const [rows] = await pool.query(
-      'SELECT id, nombre, gym, quien_edita FROM cuerpro_grupos WHERE codigo_invitacion = ?',
+      'SELECT id, nombre, gym, quien_edita FROM cuerpro_grupos WHERE codigo_invitacion = ? AND individual = 0',
       [String(codigo).trim().toUpperCase()]
     );
     if (!rows.length) throw httpError(404, 'No hay ningún grupo con ese código');
@@ -1008,7 +1038,9 @@ const acciones = {
   async encuentro_proximo(req) {
     const usuario = await sesion(req);
     const [grupoId] = requireParams(req, 'grupo_id');
-    await miembro(grupoId, usuario.id);
+    const grupo = await miembro(grupoId, usuario.id);
+    // El Individual no tiene horarios ni encuentros: se entrena cuando uno quiere
+    if (grupo.individual) return { encuentro: null };
     const encuentro = await proximoEncuentro(grupoId);
     if (!encuentro) return { encuentro: null };
     const [confirmaciones] = await pool.query(

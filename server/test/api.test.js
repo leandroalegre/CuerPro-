@@ -163,7 +163,7 @@ test('flujo completo de un grupo', { skip: !enabled && 'Definí CUERPRO_TEST_DB=
   assert.equal((await api('propuestas', { grupo_id: grupoId }, amigo.token)).propuestas[0].estado, 'aceptada');
 
   const yo = await api('yo', {}, amigo.token);
-  assert.equal(yo.grupos[0].rol, 'miembro');
+  assert.equal(yo.grupos.find(g => g.id === grupoId).rol, 'miembro');
   assert.equal(yo.nivel.por_grupo[0].grupo_id, grupoId);
 });
 
@@ -319,8 +319,9 @@ test('superadmin, cambiar y recuperar contraseña', { skip: !enabled && 'Definí
   assert.equal((await api('primeros_pasos', { grupo_id: 1 }, ana.token)).ok, false);
 
   // El superadmin ve planes de grupos ajenos; los demás no
-  assert.equal((await api('admin_plan', { grupo_id: 1 }, ana.token)).ok, false);
-  const ajeno = await api('admin_plan', { grupo_id: 1 }, jefe.token);
+  const [[delGym]] = await pool.query("SELECT id FROM cuerpro_grupos WHERE nombre = 'Los del gym'");
+  assert.equal((await api('admin_plan', { grupo_id: delGym.id }, ana.token)).ok, false);
+  const ajeno = await api('admin_plan', { grupo_id: delGym.id }, jefe.token);
   assert.equal(ajeno.ok, true, ajeno.error);
   assert.ok(ajeno.plan.dias.length > 0);
 
@@ -369,4 +370,43 @@ test('superadmin, cambiar y recuperar contraseña', { skip: !enabled && 'Definí
   assert.equal(sinMail.ok, false);
   assert.match(sinMail.error, /administrador/);
   fs.rmSync(dir, { recursive: true });
+});
+
+test('espacio Individual para entrenar solo', { skip: !enabled && 'Definí CUERPRO_TEST_DB=1 y DB_NAME' }, async () => {
+  const sol = await api('registro', { nombre: 'Sol', email: 'sol@test.ar', password: 'secreto1' });
+  assert.equal(sol.ok, true, sol.error);
+
+  // Al registrarse ya tiene su Individual, como coach, y una sola vez
+  let yo = await api('yo', {}, sol.token);
+  assert.equal(yo.grupos.length, 1);
+  const ind = yo.grupos[0];
+  assert.equal(ind.individual, true);
+  assert.equal(ind.nombre, 'Individual');
+  assert.equal(ind.rol, 'coach');
+  assert.equal((await api('yo', {}, sol.token)).grupos.length, 1);
+
+  // Puede armar su plan sin crear ningún grupo
+  const [[ej]] = await pool.query('SELECT id FROM cuerpro_ejercicios WHERE grupo_id IS NULL LIMIT 1');
+  const plan = { nombre: 'Mi plan', dias: [{ nombre: 'Día A', ejercicios: [{ ejercicio_id: ej.id, series: 3, repeticiones: '10' }] }] };
+  const guardado = await api('plan_guardar', { grupo_id: ind.id, plan, activar: 1 }, sol.token);
+  assert.equal(guardado.ok, true, guardado.error);
+  assert.equal((await api('plan', { grupo_id: ind.id }, sol.token)).plan.dias.length, 1);
+
+  // Sin encuentros, y nadie se puede sumar con el código
+  assert.equal((await api('encuentro_proximo', { grupo_id: ind.id }, sol.token)).encuentro, null);
+  const otro = await api('registro', { nombre: 'Tomi', email: 'tomi@test.ar', password: 'secreto1' });
+  assert.equal((await api('grupo_unirse', { codigo: ind.codigo_invitacion }, otro.token)).ok, false);
+
+  // Primeros pasos no cuenta el Individual como grupo
+  assert.equal((await api('primeros_pasos', {}, sol.token)).pasos.grupos, 0);
+
+  // Si después crea un grupo, el Individual sigue primero
+  await api('grupo_crear', { nombre: 'Zeta' }, sol.token);
+  yo = await api('yo', {}, sol.token);
+  assert.deepEqual(yo.grupos.map(g => g.individual), [true, false]);
+
+  // Los usuarios de antes que no lo tienen lo reciben al entrar
+  await pool.query('DELETE g FROM cuerpro_grupos g WHERE g.id = ?', [ind.id]);
+  yo = await api('yo', {}, sol.token);
+  assert.equal(yo.grupos.filter(g => g.individual).length, 1);
 });

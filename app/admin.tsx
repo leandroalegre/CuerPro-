@@ -28,6 +28,7 @@ interface GrupoAdmin {
   id: number;
   nombre: string;
   gym: string;
+  individual: number;
   creado: string;
   miembros: number;
   coaches: string | null;
@@ -150,7 +151,10 @@ export default function AdminScreen() {
               ))
               : gruposVistos.map(g => (
                 <Card key={g.id}>
-                  <Text style={styles.nombre}>{g.nombre}</Text>
+                  <View style={styles.fila}>
+                    <Text style={[styles.nombre, { flex: 1 }]}>{g.individual ? `Individual de ${g.coaches ?? 'alguien'}` : g.nombre}</Text>
+                    {!!g.individual && <Insignia texto="Solo" />}
+                  </View>
                   {!!g.gym && <Text style={styles.detalle}>{g.gym}</Text>}
                   <Text style={styles.detalle}>{`${g.miembros} ${g.miembros === 1 ? 'miembro' : 'miembros'} · coach: ${g.coaches || 'nadie'}`}</Text>
                   <Text style={styles.detalle}>

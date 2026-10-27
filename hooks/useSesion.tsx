@@ -36,7 +36,8 @@ export function SesionProvider({ children }: { children: ReactNode }) {
       setUsuario(data.usuario);
       setGrupos(data.grupos);
       setNivel(data.nivel);
-      const elegido = data.grupos.find(g => g.id === preferido) ?? data.grupos[0] ?? null;
+      // Si no eligió nada, arranca en su primer grupo de verdad; si no tiene, en su Individual
+      const elegido = data.grupos.find(g => g.id === preferido) ?? data.grupos.find(g => !g.individual) ?? data.grupos[0] ?? null;
       setGrupoId(elegido?.id ?? null);
     } catch (e: any) {
       // Sesión vencida: volver a la pantalla de entrada

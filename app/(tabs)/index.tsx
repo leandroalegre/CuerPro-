@@ -6,10 +6,11 @@
  * - Si no vas: cuántas veces más tenés que ir para llegar a tu objetivo del mes
  * - Una nota al confirmar ("llego 15 tarde")
  * - El coach mueve o cancela este entrenamiento, o agrega uno extra
+ * - En el Individual no hay encuentros: muestra qué día del plan te toca
  */
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Boton, Campo, Card, CardDestacada, Etiqueta, Insignia, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
@@ -51,6 +52,46 @@ export default function HoyScreen() {
         <PrimerosPasos />
         <Vacio texto="Todavía no estás en ningún grupo. Creá uno o unite con un código." />
         <Boton titulo="Ir a Grupos" onPress={() => router.push('/grupos')} />
+      </ScrollView>
+    );
+  }
+
+  // Plan por vencer y músculos para retomar: van arriba en grupo y en Individual
+  const avisosArriba = (
+    <>
+      {!!planActivo?.vence && diasParaVencer(planActivo.vence) <= 7 && (
+        <CardDestacada color={Colors.warning}>
+          <Insignia texto="Plan por vencer" tipo="aviso" />
+          <Text style={styles.avisoTexto}>{`${planActivo.nombre}: ${textoVence(planActivo.vence)}.`}</Text>
+          <TouchableOpacity onPress={() => router.push('/plan')}>
+            <Text style={[styles.avisoTexto, { color: Colors.accent, marginTop: Spacing.xs }]}>Armar el próximo plan →</Text>
+          </TouchableOpacity>
+        </CardDestacada>
+      )}
+
+      {avisos.length > 0 && (
+        <CardDestacada color={Colors.warning}>
+          <Insignia texto="Músculos para retomar" tipo="aviso" />
+          {avisos.map(a => (
+            <View key={a.musculo} style={styles.aviso}>
+              <Ionicons name="time-outline" size={16} color={Colors.warning} />
+              <Text style={styles.avisoTexto}>{a.texto}</Text>
+            </View>
+          ))}
+        </CardDestacada>
+      )}
+    </>
+  );
+
+  if (grupo.individual) {
+    return (
+      <ScrollView style={pantalla.scroll} contentContainerStyle={pantalla.contenido}>
+        <Etiqueta>Individual</Etiqueta>
+        <Text style={styles.frase}>{`“${fraseDelDia()}”`}</Text>
+        <InstalarApp />
+        <PrimerosPasos />
+        {avisosArriba}
+        <TeToca grupoId={grupo.id} />
       </ScrollView>
     );
   }
@@ -130,27 +171,7 @@ export default function HoyScreen() {
       <Text style={styles.frase}>{`“${fraseDelDia()}”`}</Text>
       <InstalarApp />
       <PrimerosPasos />
-      {!!planActivo?.vence && diasParaVencer(planActivo.vence) <= 7 && (
-        <CardDestacada color={Colors.warning}>
-          <Insignia texto="Plan por vencer" tipo="aviso" />
-          <Text style={styles.avisoTexto}>{`${planActivo.nombre}: ${textoVence(planActivo.vence)}.`}</Text>
-          <TouchableOpacity onPress={() => router.push('/plan')}>
-            <Text style={[styles.avisoTexto, { color: Colors.accent, marginTop: Spacing.xs }]}>Armar el próximo plan →</Text>
-          </TouchableOpacity>
-        </CardDestacada>
-      )}
-
-      {avisos.length > 0 && (
-        <CardDestacada color={Colors.warning}>
-          <Insignia texto="Músculos para retomar" tipo="aviso" />
-          {avisos.map(a => (
-            <View key={a.musculo} style={styles.aviso}>
-              <Ionicons name="time-outline" size={16} color={Colors.warning} />
-              <Text style={styles.avisoTexto}>{a.texto}</Text>
-            </View>
-          ))}
-        </CardDestacada>
-      )}
+      {avisosArriba}
 
       {error && <Vacio texto={error} />}
 
@@ -270,6 +291,47 @@ export default function HoyScreen() {
   );
 }
 
+// Individual: el día del plan que te recomendamos según lo último que entrenaste
+function TeToca({ grupoId }: { grupoId: number }) {
+  const { token } = useSesion();
+  const [datos, setDatos] = useState<{ hayPlan: boolean; recomendado: { nombre: string; texto: string } | null; ultimo: string | null } | null>(null);
+  useFocusEffect(useCallback(() => {
+    if (!token) return;
+    Promise.all([
+      api<{ plan: { dias: unknown[] } | null }>('plan', { grupo_id: grupoId }, token),
+      api<{ entrenamientos: { fecha: string; dia_nombre: string | null }[]; recomendado: { nombre: string; texto: string } | null }>(
+        'mis_entrenamientos', { grupo_id: grupoId }, token),
+    ])
+      .then(([p, h]) => setDatos({
+        hayPlan: !!p.plan?.dias.length,
+        recomendado: h.recomendado,
+        ultimo: h.entrenamientos[0] ? `${h.entrenamientos[0].fecha.split('-').reverse().slice(0, 2).join('/')}${h.entrenamientos[0].dia_nombre ? ` · ${h.entrenamientos[0].dia_nombre}` : ''}` : null,
+      }))
+      .catch(() => {});
+  }, [token, grupoId]));
+
+  if (!datos) return null;
+  if (!datos.hayPlan) {
+    return (
+      <CardDestacada>
+        <Etiqueta>Tu plan</Etiqueta>
+        <Text style={styles.titulo}>Armá tu plan</Text>
+        <Texto muted>Elegí los días y los ejercicios que vas a hacer. Después entrenás cuando quieras.</Texto>
+        <Boton titulo="Armar mi plan" onPress={() => router.push('/plan')} style={{ marginTop: Spacing.md }} />
+      </CardDestacada>
+    );
+  }
+  return (
+    <CardDestacada>
+      <Etiqueta>Hoy te toca</Etiqueta>
+      <Text style={styles.fecha}>{datos.recomendado?.nombre ?? 'El día que quieras'}</Text>
+      {!!datos.recomendado && <Texto muted>{datos.recomendado.texto}</Texto>}
+      {!!datos.ultimo && <Texto muted>{`Último entrenamiento: ${datos.ultimo}`}</Texto>}
+      <Boton titulo="Empezar a entrenar" onPress={() => router.push('/entrenar')} style={{ marginTop: Spacing.md }} />
+    </CardDestacada>
+  );
+}
+
 const DIAS_CORTOS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -380,5 +442,6 @@ const styles = StyleSheet.create({
   tocaTexto: { ...Typography.body, color: Colors.textPrimary, fontWeight: '600' },
   aviso: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.sm },
   avisoTexto: { ...Typography.body, color: Colors.textPrimary, flex: 1, minWidth: 0 },
+  titulo: { ...Typography.titleLg, color: Colors.textPrimary },
   frase: { ...Typography.body, color: Colors.textSecondary, fontStyle: 'italic', marginBottom: Spacing.md },
 });

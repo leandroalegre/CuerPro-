@@ -467,7 +467,7 @@ export default function PlanScreen() {
       <Etiqueta>{grupo.nombre}</Etiqueta>
 
       {!plan && !cargando && (
-        <Vacio texto={esCoach ? 'El grupo todavía no tiene plan. Armalo acá abajo.' : 'El coach todavía no armó el plan.'} />
+        <Vacio texto={grupo.individual ? 'Todavía no tenés plan. Armalo acá abajo: los días y los ejercicios que vas a hacer.' : esCoach ? 'El grupo todavía no tiene plan. Armalo acá abajo.' : 'El coach todavía no armó el plan.'} />
       )}
 
       {plan && (
@@ -562,7 +562,7 @@ export default function PlanScreen() {
         <Boton titulo={plan ? 'Editar plan' : 'Armar plan'} onPress={() => empezarEdicion()} disabled={!catalogo.length} style={{ marginBottom: Spacing.md }} />
       )}
 
-      {plan && (
+      {plan && !grupo.individual && (
         <Card>
           <Titulo>Propuestas</Titulo>
           {!esCoach && (

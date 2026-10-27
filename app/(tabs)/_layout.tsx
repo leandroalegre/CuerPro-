@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
+import { SelectorEspacio } from '../../components/SelectorEspacio';
 import { Colors } from '../../constants/theme';
 
 export default function TabLayout() {
@@ -11,6 +12,7 @@ export default function TabLayout() {
         tabBarStyle: { backgroundColor: Colors.bgCard, borderTopColor: Colors.border },
         headerStyle: { backgroundColor: Colors.bgCard },
         headerTintColor: Colors.textPrimary,
+        headerRight: () => <SelectorEspacio />,
       }}
     >
       <Tabs.Screen
