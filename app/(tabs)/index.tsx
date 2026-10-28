@@ -6,6 +6,7 @@
  * - Si no vas: cuántas veces más tenés que ir para llegar a tu objetivo del mes
  * - Una nota al confirmar ("llego 15 tarde")
  * - El coach mueve o cancela este entrenamiento, o agrega uno extra
+ * - Quién entrenó por su cuenta con el plan del grupo (suma como ir)
  * - En el Individual no hay encuentros: muestra qué día del plan te toca
  */
 import { Ionicons } from '@expo/vector-icons';
@@ -23,7 +24,7 @@ import { api, Confirmacion, diasParaVencer, PlanResumen, textoVence } from '../.
 
 export default function HoyScreen() {
   const { token, usuario, grupo } = useSesion();
-  const { encuentro, objetivo, cargando, error, recargar } = useEncuentro();
+  const { encuentro, objetivo, porSuCuenta, cargando, error, recargar } = useEncuentro();
   const [enviando, setEnviando] = useState(false);
   const [nota, setNota] = useState('');
   const [agenda, setAgenda] = useState<'mover' | 'agregar' | null>(null);
@@ -271,7 +272,10 @@ export default function HoyScreen() {
           )}
 
           {mia?.va === 0 && (
-            <Boton titulo="Entrenar por mi cuenta" tipo="secundario" onPress={() => router.push('/entrenar?modo=solo')} />
+            <>
+              <Boton titulo="Entrenar por mi cuenta" tipo="secundario" onPress={() => router.push('/entrenar?modo=solo')} />
+              <Texto muted>Con el plan del grupo y 3 series anotadas, suma igual que ir.</Texto>
+            </>
           )}
 
           <Card>
@@ -286,6 +290,22 @@ export default function HoyScreen() {
             <Boton titulo="Empezar a entrenar" onPress={() => router.push('/entrenar')} />
           )}
         </>
+      )}
+
+      {porSuCuenta.length > 0 && (
+        <Card>
+          <Titulo>Entrenaron por su cuenta</Titulo>
+          <Texto muted>Con el plan del grupo, en la última semana. Suma como ir.</Texto>
+          {porSuCuenta.map(p => (
+            <View key={`${p.usuario_id}-${p.fecha}`} style={styles.persona}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.nombre}>{p.usuario_id === usuario?.id ? `${p.nombre} (vos)` : p.nombre}</Text>
+                <Text style={styles.nota}>{`${fechaLinda(`${p.fecha} 00:00`).split(' a las ')[0]}${p.dia ? ` · ${p.dia}` : ''}`}</Text>
+              </View>
+              <Ionicons name="checkmark-circle" size={22} color={Colors.success} />
+            </View>
+          ))}
+        </Card>
       )}
     </ScrollView>
   );

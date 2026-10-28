@@ -68,6 +68,8 @@ export interface Encuentro {
   rutina: EjercicioRutina[];
   confirmaciones: Confirmacion[];
 }
+// Quién del grupo entrenó por su cuenta en la última semana
+export interface PorSuCuenta { usuario_id: number; nombre: string; fecha: string; dia: string | null }
 export interface Objetivo {
   nivel: string;
   objetivo: string | null;

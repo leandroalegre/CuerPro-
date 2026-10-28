@@ -71,6 +71,8 @@ const COLUMNAS_NUEVAS = [
   ['cuerpro_planes', 'vence', 'DATE DEFAULT NULL AFTER archivado'],
   ['cuerpro_grupos', 'dias_por_zona', 'VARCHAR(255) DEFAULT NULL AFTER dias_aviso_musculo'],
   ['cuerpro_usuarios', 'superadmin', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER password_hash'],
+  ['cuerpro_series', 'grupo_id', 'INT DEFAULT NULL AFTER encuentro_id'],
+  ['cuerpro_series', 'dia_id', 'INT DEFAULT NULL AFTER grupo_id'],
   // Los "Mi entrenamiento" que creaba la bienvenida para entrenar solo pasan a ser el espacio Individual
   ['cuerpro_grupos', 'individual', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER quien_edita',
    `UPDATE cuerpro_grupos g SET g.individual = 1, g.nombre = 'Individual'
@@ -132,6 +134,7 @@ const SESION_DIAS = 60;
 
 const PUNTOS = {
   asistencia:      10,
+  por_su_cuenta:   10, // entrenar por tu cuenta suma igual que ir
   rutina_completa: 5,
   semana_completa: 20,
   record:          15,
@@ -309,6 +312,50 @@ async function codigoLibre() {
     if (!ya.length) break;
   }
   return codigo;
+}
+
+// Entrenar por tu cuenta con el plan de un grupo suma como ir: una vez por día y por grupo,
+// con al menos 3 series, y no si ese día ya te marcaron la asistencia en ese grupo.
+// Devuelve true la vez que suma.
+const SERIES_PARA_SUMAR = 3;
+async function sumarPorSuCuenta(usuarioId, grupoId) {
+  // La fecha de MySQL, la misma que usan las consultas de abajo
+  const [[{ hoy }]] = await pool.query("SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS hoy");
+  const ref = `cuenta:${grupoId}:${hoy}`;
+  const [[ya]] = await pool.query(
+    'SELECT 1 AS si FROM cuerpro_puntos WHERE usuario_id = ? AND motivo = ? AND referencia = ?',
+    [usuarioId, 'por_su_cuenta', ref]
+  );
+  if (ya) return false;
+  const [[{ series }]] = await pool.query(
+    `SELECT COUNT(*) AS series FROM cuerpro_series
+     WHERE usuario_id = ? AND grupo_id = ? AND encuentro_id IS NULL AND created_at >= CURDATE()`,
+    [usuarioId, grupoId]
+  );
+  if (series < SERIES_PARA_SUMAR) return false;
+  const [[fue]] = await pool.query(
+    `SELECT 1 AS si FROM cuerpro_confirmaciones c JOIN cuerpro_encuentros e ON e.id = c.encuentro_id
+     WHERE c.usuario_id = ? AND e.grupo_id = ? AND c.asistio = 1 AND DATE(e.fecha_hora) = CURDATE()`,
+    [usuarioId, grupoId]
+  );
+  if (fue) return false;
+  await sumarPuntos(usuarioId, grupoId, 'por_su_cuenta', ref);
+  return true;
+}
+
+// Quién del grupo entrenó por su cuenta en la última semana (lo que sumó)
+async function porSuCuentaDelGrupo(grupoId) {
+  const [filas] = await pool.query(
+    `SELECT u.id AS usuario_id, u.nombre, SUBSTRING_INDEX(p.referencia, ':', -1) AS fecha,
+            (SELECT d.nombre FROM cuerpro_series s JOIN cuerpro_plan_dias d ON d.id = s.dia_id
+             WHERE s.usuario_id = p.usuario_id AND s.grupo_id = p.grupo_id AND s.encuentro_id IS NULL
+               AND DATE(s.created_at) = SUBSTRING_INDEX(p.referencia, ':', -1) ORDER BY s.id LIMIT 1) AS dia
+     FROM cuerpro_puntos p JOIN cuerpro_usuarios u ON u.id = p.usuario_id
+     WHERE p.grupo_id = ? AND p.motivo = 'por_su_cuenta' AND p.created_at >= NOW() - INTERVAL 7 DAY
+     ORDER BY p.created_at DESC`,
+    [grupoId]
+  );
+  return filas;
 }
 
 async function sumarPuntos(usuarioId, grupoId, motivo, referencia) {
@@ -499,7 +546,7 @@ async function objetivoDelMes(usuarioId, grupoId, fechaHora) {
   const necesitas = Math.ceil(nivel.siguiente.faltan / PUNTOS.asistencia);
   const llegas = necesitas <= quedan;
   const texto = llegas
-    ? `Para llegar a ${nivel.siguiente.nombre} tenés que ir a ${necesitas} de los ${quedan} entrenamientos que quedan este mes.`
+    ? `Para llegar a ${nivel.siguiente.nombre} tenés que entrenar ${necesitas} veces de las ${quedan} que quedan este mes. Si no podés ir, entrenar por tu cuenta con el plan del grupo suma igual.`
     : `Quedan ${quedan} entrenamientos este mes: con asistencia sola no llegás a ${nivel.siguiente.nombre}, ` +
       `pero cada récord personal suma ${PUNTOS.record} puntos más.`;
   return { nivel: nivel.nivel, objetivo: nivel.siguiente.nombre, necesitas, quedan, llegas, texto };
@@ -1040,9 +1087,10 @@ const acciones = {
     const [grupoId] = requireParams(req, 'grupo_id');
     const grupo = await miembro(grupoId, usuario.id);
     // El Individual no tiene horarios ni encuentros: se entrena cuando uno quiere
-    if (grupo.individual) return { encuentro: null };
+    if (grupo.individual) return { encuentro: null, por_su_cuenta: [] };
+    const porSuCuenta = await porSuCuentaDelGrupo(grupoId);
     const encuentro = await proximoEncuentro(grupoId);
-    if (!encuentro) return { encuentro: null };
+    if (!encuentro) return { encuentro: null, por_su_cuenta: porSuCuenta };
     const [confirmaciones] = await pool.query(
       `SELECT u.id AS usuario_id, u.nombre, c.va, c.asistio, c.nota
        FROM cuerpro_miembros m
@@ -1057,7 +1105,7 @@ const acciones = {
     const rutina = dia ? await rutinaDelDia(dia.id, encuentro.id) : [];
     const mia = confirmaciones.find(c => c.usuario_id === usuario.id);
     const objetivo = mia?.va === 0 ? await objetivoDelMes(usuario.id, grupoId, encuentro.fecha_hora) : null;
-    return { encuentro: { ...encuentro, dia, rutina, confirmaciones }, objetivo };
+    return { encuentro: { ...encuentro, dia, rutina, confirmaciones }, objetivo, por_su_cuenta: porSuCuenta };
   },
 
   // El coach mueve un encuentro puntual; el horario fijo no cambia
@@ -1173,8 +1221,12 @@ const acciones = {
       [encuentroId, usuarioId, vino]
     );
     const ref = `encuentro:${encuentroId}`;
-    if (vino) await sumarPuntos(usuarioId, encuentro.grupo_id, 'asistencia', ref);
-    else await quitarPuntos(usuarioId, 'asistencia', ref);
+    // Si ese día también había entrenado por su cuenta, queda solo la asistencia
+    const porSuCuenta = `cuenta:${encuentro.grupo_id}:${String(encuentro.fecha_hora).slice(0, 10)}`;
+    if (vino) {
+      await sumarPuntos(usuarioId, encuentro.grupo_id, 'asistencia', ref);
+      await quitarPuntos(usuarioId, 'por_su_cuenta', porSuCuenta);
+    } else await quitarPuntos(usuarioId, 'asistencia', ref);
     return {};
   },
 
@@ -1218,23 +1270,26 @@ const acciones = {
     const [ejercicioId, numero, repeticiones] = requireParams(req, 'ejercicio_id', 'numero', 'repeticiones');
     const peso = Number(getParam(req, 'peso') || 0);
     const encuentroId = getParam(req, 'encuentro_id') || null;
-    let grupoId = null;
+    // Por tu cuenta se manda el grupo (y el día) del plan que estás haciendo
+    let grupoId = Number(getParam(req, 'grupo_id')) || null;
+    const diaId = Number(getParam(req, 'dia_id')) || null;
     if (encuentroId) {
       const [[encuentro]] = await pool.query('SELECT grupo_id FROM cuerpro_encuentros WHERE id = ?', [encuentroId]);
       if (!encuentro) throw httpError(404, 'Encuentro no encontrado');
-      await miembro(encuentro.grupo_id, usuario.id);
       grupoId = encuentro.grupo_id;
     }
+    if (grupoId) await miembro(grupoId, usuario.id);
 
     const [[mejor]] = await pool.query(
       'SELECT MAX(peso) AS peso, COUNT(*) AS veces FROM cuerpro_series WHERE usuario_id = ? AND ejercicio_id = ?',
       [usuario.id, ejercicioId]
     );
     const [r] = await pool.query(
-      `INSERT INTO cuerpro_series (usuario_id, encuentro_id, ejercicio_id, numero, repeticiones, peso)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [usuario.id, encuentroId, ejercicioId, numero, repeticiones, peso]
+      `INSERT INTO cuerpro_series (usuario_id, encuentro_id, grupo_id, dia_id, ejercicio_id, numero, repeticiones, peso)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [usuario.id, encuentroId, grupoId, encuentroId ? null : diaId, ejercicioId, numero, repeticiones, peso]
     );
+    const sumo = !encuentroId && grupoId ? await sumarPorSuCuenta(usuario.id, grupoId) : false;
 
     // Récord personal: más peso que tu mejor marca (la primera vez no cuenta)
     const record = mejor.veces > 0 && peso > Number(mejor.peso);
@@ -1242,7 +1297,7 @@ const acciones = {
       const hoy = new Date().toISOString().slice(0, 10);
       await sumarPuntos(usuario.id, grupoId, 'record', `record:${ejercicioId}:${hoy}`);
     }
-    return { id: r.insertId, record };
+    return { id: r.insertId, record, sumo };
   },
 
   // Tus últimos días entrenados (en cualquier grupo o solo) y qué día del plan activo
@@ -1269,7 +1324,7 @@ const acciones = {
     }
 
     const [series] = await pool.query(
-      `SELECT DATE_FORMAT(s.created_at, '%Y-%m-%d') AS fecha, s.ejercicio_id, e.musculo_principal AS musculo
+      `SELECT DATE_FORMAT(s.created_at, '%Y-%m-%d') AS fecha, s.ejercicio_id, s.dia_id, e.musculo_principal AS musculo
        FROM cuerpro_series s JOIN cuerpro_ejercicios e ON e.id = s.ejercicio_id
        WHERE s.usuario_id = ? AND s.created_at >= NOW() - INTERVAL 60 DAY
        ORDER BY s.created_at DESC`,
@@ -1277,7 +1332,8 @@ const acciones = {
     );
     const porFecha = new Map();
     for (const s of series) {
-      if (!porFecha.has(s.fecha)) porFecha.set(s.fecha, { fecha: s.fecha, ejercicios: new Set(), musculos: new Set() });
+      if (!porFecha.has(s.fecha)) porFecha.set(s.fecha, { fecha: s.fecha, ejercicios: new Set(), musculos: new Set(), dia: null });
+      if (s.dia_id && dias.has(s.dia_id)) porFecha.get(s.fecha).dia = dias.get(s.dia_id);
       porFecha.get(s.fecha).ejercicios.add(s.ejercicio_id);
       porFecha.get(s.fecha).musculos.add(s.musculo);
     }
@@ -1285,9 +1341,10 @@ const acciones = {
     // A cada fecha le corresponde el día del plan que más ejercicios comparte
     const ultimaVez = new Map();
     const entrenamientos = [...porFecha.values()].map(f => {
-      let mejor = null;
+      // Si se anotó con qué día del plan, ese; si no, el que más ejercicios comparte
+      let mejor = f.dia;
       let comunes = 0;
-      for (const d of dias.values()) {
+      if (!mejor) for (const d of dias.values()) {
         const n = [...f.ejercicios].filter(id => d.ejercicios.has(id)).length;
         if (n > comunes) { mejor = d; comunes = n; }
       }

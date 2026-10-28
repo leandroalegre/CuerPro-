@@ -7,7 +7,8 @@
  * - Cada uno puede arrastrar las tarjetas para hacer los ejercicios en otro orden
  * - Por mi cuenta: cualquier día del plan, fuera del encuentro; las series y
  *   los récords cuentan igual, la asistencia no
- * - En el Individual siempre es "por mi cuenta"
+ * - En el Individual siempre es "por mi cuenta", con tu plan o con el de uno de tus grupos
+ * - Por tu cuenta con el plan de un grupo, desde 3 series suma como ir (el grupo lo ve en Hoy)
  */
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
@@ -22,16 +23,21 @@ import { aerobico, loMasAbandonado, MINUTOS, minutosTotal, ModoCorto, MODOS_CORT
 import { api, Ejercicio, EjercicioRutina, EQUIPO, esPorTiempo, Plan, resumenEjercicio } from '../../lib/api';
 
 export default function EntrenarScreen() {
-  const { token, grupo } = useSesion();
+  const { token, grupo, grupos } = useSesion();
   const { encuentro, recargar } = useEncuentro();
   const params = useLocalSearchParams<{ modo?: string }>();
   const [soloElegido, setSolo] = useState(false);
   const solo = soloElegido || !!grupo?.individual;
+  // Desde el Individual se puede hacer el plan de un grupo: cuenta para ese grupo
+  const [planDe, setPlanDe] = useState<number | null>(null);
+  const grupoPlan = (grupo?.individual && grupos.find(g => g.id === planDe)) || grupo;
+  const deVerdad = grupos.filter(g => !g.individual);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [diaId, setDiaId] = useState<number | null>(null);
   const [historial, setHistorial] = useState<Historial | null>(null);
   // Al cambiar de grupo (o al Individual) el día elegido era de otro plan
-  useEffect(() => { setDiaId(null); setPlan(null); setHistorial(null); }, [grupo?.id]);
+  useEffect(() => { setDiaId(null); setPlan(null); setHistorial(null); setDatosCorto(null); }, [grupoPlan?.id]);
+  useEffect(() => setPlanDe(null), [grupo?.id]);
   // "Tengo poco tiempo"
   const [corto, setCorto] = useState<{ modo: ModoCorto; minutos: number } | null>(null);
   const [panelCorto, setPanelCorto] = useState(false);
@@ -39,12 +45,12 @@ export default function EntrenarScreen() {
 
   const abrirPocoTiempo = async () => {
     setPanelCorto(!panelCorto);
-    if (datosCorto || !token || !grupo) return;
+    if (datosCorto || !token || !grupoPlan) return;
     try {
       const [p, pr, c] = await Promise.all([
-        api<{ plan: Plan | null }>('plan', { grupo_id: grupo.id }, token),
+        api<{ plan: Plan | null }>('plan', { grupo_id: grupoPlan.id }, token),
         api<{ musculos: { musculo: string; dias: number }[] }>('progreso', {}, token),
-        api<{ ejercicios: Ejercicio[] }>('ejercicios', { grupo_id: grupo.id }, token),
+        api<{ ejercicios: Ejercicio[] }>('ejercicios', { grupo_id: grupoPlan.id }, token),
       ]);
       setDatosCorto({ plan: p.plan, musculos: pr.musculos, cardio: c.ejercicios.filter(e => e.musculo_principal === 'cardio') });
     } catch {}
@@ -110,17 +116,17 @@ export default function EntrenarScreen() {
   }, [params.modo]));
 
   const cargarPlan = useCallback(async () => {
-    if (!token || !grupo) return;
+    if (!token || !grupoPlan) return;
     try {
       const [data, hist] = await Promise.all([
-        api<{ plan: Plan | null }>('plan', { grupo_id: grupo.id }, token),
-        api<Historial>('mis_entrenamientos', { grupo_id: grupo.id }, token),
+        api<{ plan: Plan | null }>('plan', { grupo_id: grupoPlan.id }, token),
+        api<Historial>('mis_entrenamientos', { grupo_id: grupoPlan.id }, token),
       ]);
       setPlan(data.plan);
       setHistorial(hist);
       setDiaId(d => d ?? hist.recomendado?.dia_id ?? data.plan?.dias[0]?.id ?? null);
     } catch {}
-  }, [token, grupo, encuentro?.dia?.id]);
+  }, [token, grupoPlan?.id, encuentro?.dia?.id]);
 
   useFocusEffect(useCallback(() => {
     if (solo) cargarPlan();
@@ -166,10 +172,24 @@ export default function EntrenarScreen() {
         </>
       ))}
 
-      {solo && (!grupo ? (
+      {!!grupo?.individual && deVerdad.length > 0 && (
+        <>
+          <Etiqueta>¿Qué plan hacés?</Etiqueta>
+          <View style={styles.modos}>
+            <Modo texto="Mi plan" activo={grupoPlan?.id === grupo.id} onPress={() => setPlanDe(null)} />
+            {deVerdad.map(g => (
+              <Modo key={g.id} texto={`Plan de ${g.nombre}`} activo={grupoPlan?.id === g.id} onPress={() => setPlanDe(g.id)} />
+            ))}
+          </View>
+        </>
+      )}
+
+      {solo && (!grupo || !grupoPlan ? (
         <Vacio texto="Para entrenar por tu cuenta necesitás un plan: creá un grupo propio en Grupos (puede ser solo vos) y armalo en Plan." />
       ) : !plan?.dias.length ? (
-        <Vacio texto={grupo.individual
+        <Vacio texto={grupoPlan.id !== grupo.id
+          ? `${grupoPlan.nombre} todavía no tiene plan.`
+          : grupo.individual
           ? 'Todavía no armaste tu plan. Armalo en la pestaña Plan y después entrenás cuando quieras.'
           : 'Tu grupo todavía no tiene plan. Cuando el coach lo arme, vas a poder entrenar cualquier día por tu cuenta.'} />
       ) : (
@@ -192,7 +212,11 @@ export default function EntrenarScreen() {
               <Text style={styles.diaMeta}>{historial.recomendado.texto}</Text>
             </CardDestacada>
           )}
-          <Texto muted>Elegí qué día del plan hacés. Tus series y récords suman igual.</Texto>
+          <Texto muted>
+            {grupoPlan.individual
+              ? 'Elegí qué día del plan hacés. Con 3 series anotadas sumás 10 puntos.'
+              : `Elegí qué día del plan hacés. Con 3 series anotadas sumás 10 puntos en ${grupoPlan.nombre}, igual que ir, y el grupo lo ve.`}
+          </Texto>
           <View style={styles.modos}>
             {plan.dias.map(d => (
               <Modo
@@ -212,6 +236,7 @@ export default function EntrenarScreen() {
               key={`${dia.id}-${corto ? `${corto.modo}-${corto.minutos}` : 'plan'}`}
               rutina={armar(dia.ejercicios).rutina}
               encuentroId={null}
+              cuenta={{ grupoId: grupoPlan.id, diaId: dia.id, nombre: grupoPlan.individual ? null : grupoPlan.nombre }}
               onCambio={() => {}}
             />
           )}
@@ -224,6 +249,12 @@ export default function EntrenarScreen() {
 interface Historial {
   entrenamientos: { fecha: string; dia_id: number | null; dia_nombre: string | null; musculos: string[] }[];
   recomendado: { dia_id: number; nombre: string; texto: string } | null;
+}
+
+// En la web Alert.alert no muestra nada
+function avisar(titulo: string, texto: string) {
+  if (Platform.OS === 'web') window.alert(`${titulo}\n\n${texto}`);
+  else Alert.alert(titulo, texto);
 }
 
 // Franja izquierda de cada tarjeta, donde está la manija ≡
@@ -245,13 +276,18 @@ function Modo({ texto, activo, onPress }: { texto: string; activo: boolean; onPr
 }
 
 // La rutina como tarjetas que se arrastran desde ≡; el orden es solo para vos
+// Por tu cuenta: con qué grupo y qué día del plan (nombre null en el Individual)
+interface Cuenta { grupoId: number; diaId: number; nombre: string | null }
+
 function ListaRutina({
   rutina,
   encuentroId,
+  cuenta,
   onCambio,
 }: {
   rutina: EjercicioRutina[];
   encuentroId: number | null;
+  cuenta?: Cuenta;
   onCambio: () => void;
 }) {
   const [orden, setOrden] = useState<number[]>([]);
@@ -275,6 +311,7 @@ function ListaRutina({
           <EjercicioCard
             ej={item}
             encuentroId={encuentroId}
+            cuenta={cuenta}
             onCambio={onCambio}
             drag={drag}
             activo={isActive}
@@ -289,6 +326,7 @@ function ListaRutina({
 function EjercicioCard({
   ej,
   encuentroId,
+  cuenta,
   onCambio,
   drag,
   activo,
@@ -296,6 +334,7 @@ function EjercicioCard({
 }: {
   ej: EjercicioRutina;
   encuentroId: number | null; // null: por mi cuenta
+  cuenta?: Cuenta;
   onCambio: () => void;
   drag: () => void;
   activo: boolean;
@@ -340,8 +379,9 @@ function EjercicioCard({
     }
     setGuardando(true);
     try {
-      const data = await api<{ record: boolean }>('serie_guardar', {
+      const data = await api<{ record: boolean; sumo: boolean }>('serie_guardar', {
         ...(encuentroId !== null && { encuentro_id: encuentroId }),
+        ...(encuentroId === null && cuenta && { grupo_id: cuenta.grupoId, dia_id: cuenta.diaId }),
         ejercicio_id: actual.ejercicio_id,
         numero: hechas.length + 1,
         repeticiones: r,
@@ -350,7 +390,8 @@ function EjercicioCard({
       setHechas([...hechas, { reps: r, peso: p, record: data.record }]);
       // En superserie o circuito se pasa directo al siguiente; el descanso va al final de la vuelta
       if (ej.descanso_seg && !ej.union_siguiente && hechas.length + 1 < ej.series) setFinDescanso(Date.now() + ej.descanso_seg * 1000);
-      if (data.record) Alert.alert('¡Récord personal!', `Sumaste 15 puntos con ${p} kg.`);
+      if (data.record) avisar('¡Récord personal!', `Sumaste 15 puntos con ${p} kg.`);
+      else if (data.sumo) avisar('¡Entrenamiento sumado!', cuenta?.nombre ? `Sumaste 10 puntos en ${cuenta.nombre}, como si hubieras ido.` : 'Sumaste 10 puntos.');
     } catch (e: any) {
       Alert.alert('Error', e.message);
     } finally {

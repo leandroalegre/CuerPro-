@@ -21,6 +21,7 @@ App Expo → https://cuerpro.sistemascloud.ar/api.php
 - Roles por grupo: `coach` y `miembro`. El coach hace coach a otros desde Grupos, o prende "Todos son coach" (`quien_edita = 'todos'`): ahí `yo` devuelve rol coach para todos.
 - Alternativa elegida por cualquiera vale para todo el grupo en ese encuentro (`cuerpro_cambios_encuentro`).
 - Asistencia: "voy/no voy" lo marca cada uno; `asistio` solo lo marca un coach y suma 10 puntos.
+- Por su cuenta: `serie_guardar` con `grupo_id` (y `dia_id`) sin encuentro guarda la serie para ese grupo. Con 3 series en el día suma `por_su_cuenta` (10 puntos, igual que ir) una vez por grupo y día; si ese día el coach le marca `asistio`, se quita. Vale también en el Individual. El grupo lo ve en Hoy (`encuentro_proximo.por_su_cuenta`, última semana). Desde Entrenar del Individual se elige "Mi plan" o "Plan de <grupo>".
 - Récord: superar tu propio peso máximo en un ejercicio (la primera vez no cuenta), 15 puntos, una vez por ejercicio por día.
 - Niveles por mes (temporada `YYYY-MM`): Bronce 0, Plata 100, Oro 200, Platino 300, Diamante 380; nivel = máx(nivel por puntos del mes, nivel del mes anterior − 1). Nivel general, suma todos los grupos.
 - Aviso de músculo sin entrenar: por zona (`ZONAS` en server/index.js: piernas, espalda, pecho, hombros, brazos 7 días; abdominales 4; cardio no avisa). El coach cambia los días en Grupos (`dias_por_zona`, JSON). Se muestra en Hoy y Progreso. Ojo: en schema.sql no poner ";" en comentarios.

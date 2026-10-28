@@ -410,3 +410,51 @@ test('espacio Individual para entrenar solo', { skip: !enabled && 'Definí CUERP
   yo = await api('yo', {}, sol.token);
   assert.equal(yo.grupos.filter(g => g.individual).length, 1);
 });
+
+test('entrenar por tu cuenta suma al grupo', { skip: !enabled && 'Definí CUERPRO_TEST_DB=1 y DB_NAME' }, async () => {
+  const profe = await api('registro', { nombre: 'Profe', email: 'profe@test.ar', password: 'secreto1' });
+  const lu = await api('registro', { nombre: 'Lu', email: 'lu@test.ar', password: 'secreto1' });
+  const g = await api('grupo_crear', { nombre: 'Los Fierros' }, profe.token);
+  await api('grupo_unirse', { codigo: g.grupo.codigo_invitacion }, lu.token);
+  const [[ej]] = await pool.query('SELECT id FROM cuerpro_ejercicios WHERE grupo_id IS NULL LIMIT 1');
+  const plan = { nombre: 'Plan', dias: [{ nombre: 'Piernas', ejercicios: [{ ejercicio_id: ej.id, series: 4, repeticiones: '10' }] }] };
+  await api('plan_guardar', { grupo_id: g.grupo.id, plan, activar: 1 }, profe.token);
+  const dia = (await api('plan', { grupo_id: g.grupo.id }, lu.token)).plan.dias[0];
+
+  // Con el plan del grupo, por su cuenta: suma a la tercera serie y una sola vez
+  const serie = n => api('serie_guardar', { grupo_id: g.grupo.id, dia_id: dia.id, ejercicio_id: ej.id, numero: n, repeticiones: 10, peso: 20 }, lu.token);
+  assert.equal((await serie(1)).sumo, false);
+  assert.equal((await serie(2)).sumo, false);
+  assert.equal((await serie(3)).sumo, true);
+  assert.equal((await serie(4)).sumo, false);
+  let yo = await api('yo', {}, lu.token);
+  assert.equal(yo.nivel.por_grupo.find(p => p.grupo_id === g.grupo.id).puntos, 10);
+
+  // El grupo lo ve, con el día del plan
+  const prox = await api('encuentro_proximo', { grupo_id: g.grupo.id }, profe.token);
+  assert.equal(prox.ok, true, prox.error);
+  assert.deepEqual(prox.por_su_cuenta.map(p => [p.nombre, p.dia]), [['Lu', 'Piernas']]);
+  // Y le recomienda ese día como hecho hoy
+  assert.equal((await api('mis_entrenamientos', { grupo_id: g.grupo.id }, lu.token)).entrenamientos[0].dia_nombre, 'Piernas');
+
+  // Un grupo ajeno no se puede usar
+  const otro = await api('grupo_crear', { nombre: 'Ajeno' }, profe.token);
+  assert.equal((await api('serie_guardar', { grupo_id: otro.grupo.id, ejercicio_id: ej.id, numero: 1, repeticiones: 10 }, lu.token)).ok, false);
+
+  // Si ese mismo día el coach le marca la asistencia, no suma dos veces
+  const [[{ hoy }]] = await pool.query("SELECT DATE_FORMAT(NOW() + INTERVAL 1 MINUTE, '%Y-%m-%d %H:%i') AS hoy");
+  const extra = await api('encuentro_agregar', { grupo_id: g.grupo.id, fecha_hora: hoy }, profe.token);
+  assert.equal(extra.ok, true, extra.error);
+  const [[enc]] = await pool.query('SELECT id FROM cuerpro_encuentros WHERE grupo_id = ? ORDER BY id DESC LIMIT 1', [g.grupo.id]);
+  assert.equal((await api('asistencia', { encuentro_id: enc.id, usuario_id: lu.usuario.id, asistio: 1 }, profe.token)).ok, true);
+  yo = await api('yo', {}, lu.token);
+  assert.equal(yo.nivel.por_grupo.find(p => p.grupo_id === g.grupo.id).puntos, 10);
+
+  // Con su plan Individual también suma
+  const ind = yo.grupos.find(x => x.individual);
+  await api('plan_guardar', { grupo_id: ind.id, plan, activar: 1 }, lu.token);
+  const r = [];
+  for (const n of [1, 2, 3]) r.push((await api('serie_guardar', { grupo_id: ind.id, ejercicio_id: ej.id, numero: n, repeticiones: 10 }, lu.token)).sumo);
+  assert.deepEqual(r, [false, false, true]);
+  assert.equal((await api('yo', {}, lu.token)).nivel.puntos, 20);
+});

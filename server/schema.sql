@@ -175,6 +175,9 @@ CREATE TABLE IF NOT EXISTS cuerpro_series (
   id           INT AUTO_INCREMENT PRIMARY KEY,
   usuario_id   INT NOT NULL,
   encuentro_id INT DEFAULT NULL,
+  -- Por su cuenta: con qué grupo y qué día del plan entrenó (con el grupo sale del encuentro)
+  grupo_id     INT DEFAULT NULL,
+  dia_id       INT DEFAULT NULL,
   ejercicio_id INT NOT NULL,
   numero       INT NOT NULL,
   repeticiones INT NOT NULL,
