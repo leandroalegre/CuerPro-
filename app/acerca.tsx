@@ -8,7 +8,7 @@ import { router } from 'expo-router';
 import { Image, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Boton, Card, pantalla } from '../components/ui';
-import { APP_VERSION, DESARROLLADOR, EMAIL_DESARROLLADOR, ESLOGAN } from '../constants/app';
+import { APP_VERSION, DESARROLLADOR, EMAIL_DESARROLLADOR, ESLOGAN, URL_PRIVACIDAD, URL_TERMINOS } from '../constants/app';
 import { Colors, Spacing, Typography } from '../constants/theme';
 
 const escribir = (asunto: string) =>
@@ -49,8 +49,11 @@ export default function AcercaScreen() {
           <Boton titulo="Escribime" onPress={() => escribir('Quiero CuerPro para mi gimnasio o grupo')} style={{ marginTop: Spacing.sm }} />
         </Card>
 
-        <TouchableOpacity onPress={() => Linking.openURL('https://cuerpro.sistemascloud.ar/privacidad.html').catch(() => {})}>
-          <Text style={styles.privacidad}>Política de privacidad</Text>
+        <TouchableOpacity onPress={() => Linking.openURL(URL_TERMINOS).catch(() => {})}>
+          <Text style={styles.privacidad}>Términos y condiciones</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => Linking.openURL(URL_PRIVACIDAD).catch(() => {})}>
+          <Text style={[styles.privacidad, { marginTop: Spacing.xs }]}>Política de privacidad</Text>
         </TouchableOpacity>
         <Text style={styles.version}>{`CuerPro v${APP_VERSION}`}</Text>
       </ScrollView>

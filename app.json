@@ -2,7 +2,7 @@
   "expo": {
     "name": "CuerPro",
     "slug": "cuerpro",
-    "version": "0.2.8",
+    "version": "0.2.9",
     "orientation": "portrait",
     "scheme": "cuerpro",
     "userInterfaceStyle": "dark",
@@ -10,7 +10,7 @@
       "**/*"
     ],
     "android": {
-      "versionCode": 10,
+      "versionCode": 11,
       "package": "ar.sistemascloud.cuerpro",
       "permissions": [
         "NOTIFICATIONS",

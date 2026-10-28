@@ -558,6 +558,12 @@ export default function PlanScreen() {
         </>
       )}
 
+      {plan && (
+        <Text style={styles.aviso}>
+          {grupo.individual ? 'Este plan lo armaste vos.' : 'Este plan lo arma el coach del grupo, no CuerPro.'} Entrená según tus posibilidades y, ante cualquier duda o dolor, consultá a un profesional de la salud.
+        </Text>
+      )}
+
       {esCoach && (
         <Boton titulo={plan ? 'Editar plan' : 'Armar plan'} onPress={() => empezarEdicion()} disabled={!catalogo.length} style={{ marginBottom: Spacing.md }} />
       )}
@@ -663,6 +669,7 @@ const styles = StyleSheet.create({
   nota: { ...Typography.caption, color: Colors.accent, fontStyle: 'italic' },
   altTexto: { ...Typography.caption, color: Colors.textPrimary },
   filaBotones: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md },
+  aviso: { ...Typography.caption, color: Colors.textMuted, marginBottom: Spacing.md, lineHeight: 18 },
   propuesta: { borderTopWidth: 1, borderTopColor: Colors.border, paddingVertical: Spacing.sm, marginTop: Spacing.sm },
 });
 

@@ -6,10 +6,10 @@
  */
 import { useState } from 'react';
 import { router } from 'expo-router';
-import { Alert, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { Alert, Image, KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Boton, Campo, Card } from '../components/ui';
-import { APP_VERSION, DESARROLLADOR } from '../constants/app';
+import { APP_VERSION, DESARROLLADOR, URL_PRIVACIDAD, URL_TERMINOS } from '../constants/app';
 import { Colors, Spacing, Typography } from '../constants/theme';
 import { useSesion } from '../hooks/useSesion';
 import { api } from '../lib/api';
@@ -130,6 +130,15 @@ export default function LoginScreen() {
                 cargando={cargando}
                 style={{ marginTop: Spacing.sm }}
               />
+              {modo === 'registro' && (
+                <Text style={styles.legal}>
+                  {'Al crear tu cuenta aceptás los '}
+                  <Text style={styles.legalLink} onPress={() => Linking.openURL(URL_TERMINOS).catch(() => {})}>Términos y condiciones</Text>
+                  {' y la '}
+                  <Text style={styles.legalLink} onPress={() => Linking.openURL(URL_PRIVACIDAD).catch(() => {})}>Política de privacidad</Text>
+                  {'. Los planes los arman los usuarios: consultá a un profesional de la salud antes de entrenar.'}
+                </Text>
+              )}
               {modo === 'login' && (
                 <TouchableOpacity onPress={() => ir('recuperar')}>
                   <Text style={styles.olvide}>Me olvidé la contraseña</Text>
@@ -160,5 +169,7 @@ const styles = StyleSheet.create({
   ayuda: { ...Typography.body, color: Colors.textSecondary, marginBottom: Spacing.sm },
   olvide: { ...Typography.caption, color: Colors.textSecondary, textAlign: 'center', marginTop: Spacing.md },
   cambiar: { ...Typography.body, color: Colors.accent, textAlign: 'center', marginTop: Spacing.sm },
+  legal: { ...Typography.caption, color: Colors.textSecondary, marginTop: Spacing.sm, lineHeight: 18 },
+  legalLink: { color: Colors.accent },
   creditos: { ...Typography.caption, color: Colors.textMuted, textAlign: 'center', marginTop: Spacing.xl },
 });

@@ -1,5 +1,7 @@
-export const APP_VERSION = '0.2.8';
+export const APP_VERSION = '0.2.9';
 export const DESARROLLADOR = 'Leandro Alegre';
+export const URL_TERMINOS = 'https://cuerpro.sistemascloud.ar/terminos.html';
+export const URL_PRIVACIDAD = 'https://cuerpro.sistemascloud.ar/privacidad.html';
 export const EMAIL_DESARROLLADOR = 'leandroalegre@gmail.com';
 export const ESLOGAN = 'Solo o en grupo, siempre mejorando.';
 
