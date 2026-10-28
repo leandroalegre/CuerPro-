@@ -1,0 +1,204 @@
+{
+  "nombre": "Plan 3 días",
+  "dias": [
+    {
+      "nombre": "Piernas",
+      "ejercicios": [
+        {
+          "nombre": "Bicicleta",
+          "series": 1,
+          "repeticiones": "6 min",
+          "nota": "Entrada en calor",
+          "musculo": "cardio",
+          "equipo": "maquina"
+        },
+        {
+          "nombre": "Sentadilla abierta en Smith",
+          "series": 4,
+          "repeticiones": "12",
+          "carga": "pesado",
+          "descanso_seg": 120,
+          "nota": "Un poco más del ancho de cadera",
+          "musculo": "cuadriceps",
+          "equipo": "maquina"
+        },
+        {
+          "nombre": "Prensa 45°",
+          "series": 3,
+          "repeticiones": "10",
+          "carga": "pesado",
+          "descanso_seg": 90,
+          "musculo": "cuadriceps",
+          "equipo": "maquina"
+        },
+        {
+          "nombre": "Peso muerto rumano",
+          "series": 4,
+          "repeticiones": "10",
+          "carga": "pesado",
+          "descanso_seg": 120,
+          "nota": "Con barra"
+        },
+        {
+          "nombre": "Camilla de isquios",
+          "series": 3,
+          "repeticiones": "12",
+          "carga": "pesado",
+          "descanso_seg": 90,
+          "nota": "Isometría de 1'' en fase concéntrica"
+        },
+        {
+          "nombre": "Gemelos de pie en máquina",
+          "series": 3,
+          "repeticiones": "15",
+          "carga": "moderado",
+          "descanso_seg": 90,
+          "nota": "Isometría de 2'' en fase concéntrica"
+        },
+        {
+          "nombre": "Bicicleta",
+          "series": 1,
+          "repeticiones": "4 min",
+          "nota": "Vuelta a la calma",
+          "musculo": "cardio",
+          "equipo": "maquina"
+        }
+      ]
+    },
+    {
+      "nombre": "Espalda y bíceps",
+      "ejercicios": [
+        {
+          "nombre": "Air remo",
+          "series": 1,
+          "repeticiones": "6 min",
+          "nota": "Entrada en calor",
+          "musculo": "cardio",
+          "equipo": "maquina"
+        },
+        {
+          "nombre": "Jalón al pecho",
+          "series": 3,
+          "repeticiones": "12",
+          "carga": "moderado",
+          "descanso_seg": 120,
+          "nota": "Toma prona, un poco más ancha que los hombros"
+        },
+        {
+          "nombre": "Remo con mancuerna",
+          "series": 3,
+          "repeticiones": "10",
+          "carga": "moderado",
+          "descanso_seg": 90,
+          "nota": "A un brazo, con apoyo en el banco"
+        },
+        {
+          "nombre": "Remo en máquina",
+          "series": 4,
+          "repeticiones": "8",
+          "carga": "moderado",
+          "descanso_seg": 120,
+          "nota": "Toma supina"
+        },
+        {
+          "nombre": "Pull over con soga en polea",
+          "series": 3,
+          "repeticiones": "10",
+          "carga": "moderado",
+          "descanso_seg": 90,
+          "musculo": "espalda",
+          "equipo": "polea"
+        },
+        {
+          "nombre": "Bíceps sentado hasta 90° con mancuerna",
+          "series": 4,
+          "repeticiones": "8",
+          "carga": "moderado",
+          "descanso_seg": 90,
+          "nota": "1'' de isometría en fase concéntrica",
+          "musculo": "biceps",
+          "equipo": "mancuerna"
+        },
+        {
+          "nombre": "Bíceps de pie neutro con mancuernas",
+          "series": 3,
+          "repeticiones": "15",
+          "carga": "moderado",
+          "descanso_seg": 120,
+          "nota": "1' de isometría en fase concéntrica",
+          "musculo": "biceps",
+          "equipo": "mancuerna"
+        }
+      ]
+    },
+    {
+      "nombre": "Pecho, hombros y tríceps",
+      "ejercicios": [
+        {
+          "nombre": "Air remo",
+          "series": 1,
+          "repeticiones": "6 min",
+          "nota": "Entrada en calor",
+          "musculo": "cardio",
+          "equipo": "maquina"
+        },
+        {
+          "nombre": "Press de banca plano",
+          "series": 4,
+          "repeticiones": "10-12",
+          "carga": "moderado",
+          "descanso_seg": 120
+        },
+        {
+          "nombre": "Press inclinado con barra",
+          "series": 3,
+          "repeticiones": "12",
+          "carga": "moderado",
+          "descanso_seg": 120
+        },
+        {
+          "nombre": "Apertura en máquina neutra",
+          "series": 3,
+          "repeticiones": "15",
+          "carga": "moderado",
+          "descanso_seg": 120,
+          "musculo": "pecho",
+          "equipo": "maquina"
+        },
+        {
+          "nombre": "Press de hombros en máquina",
+          "series": 3,
+          "repeticiones": "12",
+          "carga": "liviano",
+          "descanso_seg": 120,
+          "nota": "Agarre neutro"
+        },
+        {
+          "nombre": "Vuelos laterales",
+          "series": 3,
+          "repeticiones": "10",
+          "carga": "moderado",
+          "descanso_seg": 90,
+          "nota": "Con mancuernas, de pie"
+        },
+        {
+          "nombre": "Extensión de tríceps en polea",
+          "series": 4,
+          "repeticiones": "8-10",
+          "carga": "moderado",
+          "descanso_seg": 120,
+          "nota": "Polea alta con barra"
+        },
+        {
+          "nombre": "Tríceps tras nuca con soga en polea",
+          "series": 3,
+          "repeticiones": "15",
+          "carga": "moderado",
+          "descanso_seg": 90,
+          "musculo": "triceps",
+          "equipo": "polea"
+        }
+      ]
+    }
+  ]
+}

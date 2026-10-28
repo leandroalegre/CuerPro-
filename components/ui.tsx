@@ -15,6 +15,23 @@ export function Card({ children, style }: { children: ReactNode; style?: ViewSty
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
+// Tarjeta principal de una pantalla: borde de color a la izquierda
+export function CardDestacada({ children, color = Colors.accent }: { children: ReactNode; color?: string }) {
+  return <View style={[styles.card, { borderLeftWidth: 4, borderLeftColor: color }]}>{children}</View>;
+}
+
+const INSIGNIAS = {
+  exito: { color: Colors.success, backgroundColor: Colors.successBg },
+  aviso: { color: Colors.warning, backgroundColor: Colors.warningBg },
+  peligro: { color: Colors.error, backgroundColor: Colors.errorBg },
+  marca: { color: Colors.accent, backgroundColor: Colors.accentGlow },
+};
+
+// Etiqueta corta en mayúsculas: ACTIVO, VAS, TOCA HOY…
+export function Insignia({ texto, tipo = 'marca' }: { texto: string; tipo?: keyof typeof INSIGNIAS }) {
+  return <Text style={[styles.insignia, INSIGNIAS[tipo]]}>{texto.toUpperCase()}</Text>;
+}
+
 export function Titulo({ children }: { children: ReactNode }) {
   return <Text style={styles.titulo}>{children}</Text>;
 }
@@ -86,6 +103,10 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     padding: Spacing.md,
     marginBottom: Spacing.md,
+  },
+  insignia: {
+    fontSize: 11, fontWeight: '700', letterSpacing: 0.8, paddingHorizontal: 8, paddingVertical: 2,
+    borderRadius: Radius.full, overflow: 'hidden', alignSelf: 'flex-start',
   },
   titulo: { ...Typography.titleLg, color: Colors.textPrimary, marginBottom: Spacing.sm },
   etiqueta: { ...Typography.label, color: Colors.textMuted, textTransform: 'uppercase', marginBottom: Spacing.xs },

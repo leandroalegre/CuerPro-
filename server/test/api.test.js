@@ -75,6 +75,7 @@ test('flujo completo de un grupo', { skip: !enabled && 'Definí CUERPRO_TEST_DB=
       dias: [
         { nombre: 'Pecho y tríceps', ejercicios: [
           { ejercicio_id: id('Press de banca plano'), series: 4, repeticiones: '8-10',
+            carga: 'pesado', descanso_seg: 120, nota: 'Bajar en 3 segundos',
             alternativas: [id('Press de pecho en máquina'), id('Press de banca con mancuernas')] },
           { ejercicio_id: id('Extensión de tríceps en polea') },
         ] },
@@ -97,6 +98,10 @@ test('flujo completo de un grupo', { skip: !enabled && 'Definí CUERPRO_TEST_DB=
   assert.equal(enc.dia.nombre, 'Pecho y tríceps');
   assert.equal(enc.rutina.length, 2);
   assert.equal(enc.rutina[0].alternativas.length, 2);
+  assert.equal(enc.rutina[0].carga, 'pesado');
+  assert.equal(enc.rutina[0].descanso_seg, 120);
+  assert.equal(enc.rutina[0].nota, 'Bajar en 3 segundos');
+  assert.equal(enc.rutina[1].carga, null);
   assert.equal(enc.confirmaciones.length, 2);
 
   // Pedirlo dos veces devuelve el mismo encuentro
@@ -158,6 +163,322 @@ test('flujo completo de un grupo', { skip: !enabled && 'Definí CUERPRO_TEST_DB=
   assert.equal((await api('propuestas', { grupo_id: grupoId }, amigo.token)).propuestas[0].estado, 'aceptada');
 
   const yo = await api('yo', {}, amigo.token);
-  assert.equal(yo.grupos[0].rol, 'miembro');
+  assert.equal(yo.grupos.find(g => g.id === grupoId).rol, 'miembro');
   assert.equal(yo.nivel.por_grupo[0].grupo_id, grupoId);
+});
+
+test('horarios distintos por día, mover, cancelar y agregar encuentros', { skip: !enabled && 'Definí CUERPRO_TEST_DB=1 y DB_NAME' }, async () => {
+  const coach = await api('registro', { nombre: 'Coach', email: 'coach2@test.ar', password: 'secreto1' });
+  const amigo = await api('registro', { nombre: 'Amigo', email: 'amigo2@test.ar', password: 'secreto2' });
+  const grupo = await api('grupo_crear', { nombre: 'Mañaneros' }, coach.token);
+  const grupoId = grupo.grupo.id;
+  await api('grupo_unirse', { codigo: grupo.grupo.codigo_invitacion }, amigo.token);
+
+  const pad = n => String(n).padStart(2, '0');
+  const sql = f => `${f.getFullYear()}-${pad(f.getMonth() + 1)}-${pad(f.getDate())} ${pad(f.getHours())}:${pad(f.getMinutes())}`;
+  const enDias = (d, hh, mm) => { const f = new Date(); f.setDate(f.getDate() + d); f.setHours(hh, mm, 0, 0); return f; };
+
+  // Mañana a las 08:00 y pasado mañana a las 20:30
+  const manana = enDias(1, 8, 0);
+  const pasado = enDias(2, 20, 30);
+  const r = await api('horarios_guardar', {
+    grupo_id: grupoId,
+    horarios: [{ dia_semana: manana.getDay(), hora: '08:00' }, { dia_semana: pasado.getDay(), hora: '20:30' }],
+  }, coach.token);
+  assert.equal(r.ok, true, r.error);
+
+  const prox = async () => (await api('encuentro_proximo', { grupo_id: grupoId }, amigo.token)).encuentro;
+  const e1 = await prox();
+  assert.equal(e1.fecha_hora, `${sql(manana)}:00`);
+
+  // Solo el coach mueve; mañana pasa a las 10:15 y sigue siendo el próximo
+  assert.equal((await api('encuentro_mover', { encuentro_id: e1.id, fecha_hora: sql(enDias(1, 10, 15)) }, amigo.token)).ok, false);
+  const mov = await api('encuentro_mover', { encuentro_id: e1.id, fecha_hora: sql(enDias(1, 10, 15)) }, coach.token);
+  assert.equal(mov.ok, true, mov.error);
+  const e1b = await prox();
+  assert.equal(e1b.id, e1.id);
+  assert.equal(e1b.fecha_hora, `${sql(enDias(1, 10, 15))}:00`);
+  assert.equal(e1b.fecha_original, `${sql(manana)}:00`);
+
+  // Cancelado: el próximo es el de pasado mañana a las 20:30, y el horario fijo de mañana no vuelve
+  assert.equal((await api('encuentro_cancelar', { encuentro_id: e1.id }, coach.token)).ok, true);
+  const e2 = await prox();
+  assert.equal(e2.fecha_hora, `${sql(pasado)}:00`);
+
+  // Un extra antes de ese pasa a ser el próximo; no se puede duplicar
+  const extra = await api('encuentro_agregar', { grupo_id: grupoId, fecha_hora: sql(enDias(1, 18, 0)) }, coach.token);
+  assert.equal(extra.ok, true, extra.error);
+  assert.equal((await prox()).id, extra.id);
+  assert.equal((await api('encuentro_agregar', { grupo_id: grupoId, fecha_hora: sql(enDias(1, 18, 0)) }, coach.token)).ok, false);
+  assert.equal((await api('encuentro_agregar', { grupo_id: grupoId, fecha_hora: '2020-01-01 10:00' }, coach.token)).ok, false);
+
+  // Confirmar con una nota; volver a confirmar sin nota la conserva, con nota vacía la borra
+  const ex = (await prox()).id;
+  assert.equal((await api('confirmar', { encuentro_id: ex, va: 1, nota: 'Llego 15 tarde' }, amigo.token)).ok, true);
+  const nota = async () => (await prox()).confirmaciones.find(c => c.usuario_id === amigo.usuario.id).nota;
+  assert.equal(await nota(), 'Llego 15 tarde');
+  await api('confirmar', { encuentro_id: ex, va: 1 }, amigo.token);
+  assert.equal(await nota(), 'Llego 15 tarde');
+  await api('confirmar', { encuentro_id: ex, va: 1, nota: '' }, amigo.token);
+  assert.equal(await nota(), null);
+
+  // Aviso por zona: defaults y lo que cambia el coach (lo inválido se ignora)
+  let det = await api('grupo_detalle', { grupo_id: grupoId }, amigo.token);
+  assert.equal(det.grupo.dias_por_zona.piernas, 7);
+  assert.equal(det.grupo.dias_por_zona.abdominales, 4);
+  assert.equal((await api('grupo_config', { grupo_id: grupoId, dias_por_zona: { piernas: 3, pecho: 99 } }, coach.token)).ok, true);
+  det = await api('grupo_detalle', { grupo_id: grupoId }, amigo.token);
+  assert.equal(det.grupo.dias_por_zona.piernas, 3);
+  assert.equal(det.grupo.dias_por_zona.pecho, 7);
+
+  // El coach crea un ejercicio propio del grupo
+  const ej = await api('ejercicio_crear', { grupo_id: grupoId, nombre: 'Remo en TRX', musculo_principal: 'espalda', equipo: 'otro' }, coach.token);
+  assert.equal(ej.ok, true, ej.error);
+  const cat = await api('ejercicios', { grupo_id: grupoId }, amigo.token);
+  assert.ok(cat.ejercicios.some(e => e.id === ej.id && e.grupo_id === grupoId));
+
+  // El próximo encuentro se generó sin plan: al armarlo, toma su rutina
+  assert.equal((await prox()).rutina.length, 0);
+  const plan = nombreDia => ({ dias: [
+    { nombre: nombreDia, ejercicios: [{ ejercicio_id: ej.id }] },
+    { nombre: 'Día B', ejercicios: [{ ejercicio_id: ej.id }, { ejercicio_id: ej.id }] },
+  ] });
+  const g1 = await api('plan_guardar', { grupo_id: grupoId, plan: plan('Día A') }, coach.token);
+  assert.equal(g1.ok, true);
+  let p = await prox();
+  assert.equal(p.dia.nombre, 'Día A');
+  assert.equal(p.rutina.length, 1);
+  // Si el coach vuelve a guardar el plan, sigue con el mismo día (del plan nuevo)
+  const g2 = await api('plan_guardar', { grupo_id: grupoId, plan_id: g1.plan_id, plan: plan('Día A editado') }, coach.token);
+  assert.equal(g2.ok, true);
+  p = await prox();
+  assert.equal(p.dia.nombre, 'Día A editado');
+  // Si mueve los días de lugar, sigue tocando el mismo día
+  const invertido = { dias: [...plan('Día A editado').dias].reverse() };
+  const g3 = await api('plan_guardar', { grupo_id: grupoId, plan_id: g2.plan_id, plan: invertido }, coach.token);
+  assert.equal(g3.ok, true);
+  assert.equal((await prox()).dia.nombre, 'Día A editado');
+
+  // Varios planes: uno nuevo no cambia el activo hasta que se elige
+  const verano = await api('plan_guardar', { grupo_id: grupoId, plan: { nombre: 'Verano', dias: [{ nombre: 'Full body', ejercicios: [{ ejercicio_id: ej.id }] }] } }, coach.token);
+  assert.equal(verano.ok, true);
+  let planes = (await api('plan', { grupo_id: grupoId }, amigo.token)).planes;
+  assert.deepEqual(planes.map(p => [p.nombre, p.activo]), [['Plan', 1], ['Verano', 0]]);
+  assert.equal((await api('plan', { grupo_id: grupoId, plan_id: verano.plan_id }, amigo.token)).plan.nombre, 'Verano');
+  assert.equal((await api('plan_activar', { grupo_id: grupoId, plan_id: verano.plan_id }, amigo.token)).ok, false);
+  assert.equal((await api('plan_activar', { grupo_id: grupoId, plan_id: verano.plan_id }, coach.token)).ok, true);
+  assert.equal((await api('plan', { grupo_id: grupoId }, amigo.token)).plan.nombre, 'Verano');
+  assert.equal((await prox()).dia.nombre, 'Full body');
+  // El activo no se borra; el otro sí
+  assert.equal((await api('plan_borrar', { grupo_id: grupoId, plan_id: verano.plan_id }, coach.token)).ok, false);
+  assert.equal((await api('plan_borrar', { grupo_id: grupoId, plan_id: g3.plan_id }, coach.token)).ok, true);
+  planes = (await api('plan', { grupo_id: grupoId }, amigo.token)).planes;
+  assert.deepEqual(planes.map(p => p.nombre), ['Verano']);
+
+  // Superserie: queda marcada en el primero; el último del día no puede unirse a nada
+  const ss = await api('plan_guardar', { grupo_id: grupoId, plan_id: verano.plan_id, plan: { nombre: 'Verano', vence: '2030-01-31', dias: [{ nombre: 'Full body', ejercicios: [
+    { ejercicio_id: ej.id, union_siguiente: 'superserie' }, { ejercicio_id: ej.id, union_siguiente: 'circuito' },
+  ] }] } }, coach.token);
+  assert.equal(ss.ok, true, ss.error);
+  const rut = (await api('plan', { grupo_id: grupoId }, amigo.token)).plan.dias[0].ejercicios;
+  assert.equal((await api('plan', { grupo_id: grupoId }, amigo.token)).plan.vence, '2030-01-31');
+  assert.deepEqual(rut.map(e => e.union_siguiente), ['superserie', null]);
+});
+
+test('superadmin, cambiar y recuperar contraseña', { skip: !enabled && 'Definí CUERPRO_TEST_DB=1 y DB_NAME' }, async () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  // sendmail falso: guarda el email en un archivo
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cuerpro-mail-'));
+  const buzon = path.join(dir, 'buzon.txt');
+  const sendmail = path.join(dir, 'sendmail');
+  fs.writeFileSync(sendmail, `#!/bin/sh\ncat > "${buzon}"\n`, { mode: 0o755 });
+  process.env.SENDMAIL_PATH = sendmail;
+
+  const ana = await api('registro', { nombre: 'Ana', email: 'ana@test.ar', password: 'secreto1' });
+  const jefe = await api('registro', { nombre: 'Jefe', email: 'jefe@test.ar', password: 'secreto1' });
+  assert.equal((await api('yo', {}, jefe.token)).usuario.superadmin, false);
+  assert.equal((await api('admin_resumen', {}, jefe.token)).ok, false);
+  await pool.query("UPDATE cuerpro_usuarios SET superadmin = 1 WHERE email = 'jefe@test.ar'");
+  assert.equal((await api('yo', {}, jefe.token)).usuario.superadmin, true);
+
+  // El coach cambia el nombre del grupo; un miembro no
+  const g = await api('grupo_crear', { nombre: 'Viejo', gym: 'Gym' }, jefe.token);
+  assert.equal((await api('grupo_config', { grupo_id: g.grupo.id, nombre: '  ' }, jefe.token)).ok, false);
+  assert.equal((await api('grupo_config', { grupo_id: g.grupo.id, nombre: 'Nuevo', gym: 'Otro gym' }, jefe.token)).ok, true);
+  assert.equal((await api('grupo_unirse', { codigo: g.grupo.codigo_invitacion }, ana.token)).ok, true);
+  assert.equal((await api('grupo_config', { grupo_id: g.grupo.id, nombre: 'Hackeado' }, ana.token)).ok, false);
+  const gr = (await api('yo', {}, ana.token)).grupos.find(x => x.id === g.grupo.id);
+  assert.deepEqual([gr.nombre, gr.gym], ['Nuevo', 'Otro gym']);
+
+  // Primeros pasos: Ana está en un grupo sin plan, sin horarios y todavía no entrenó
+  const pp = await api('primeros_pasos', { grupo_id: g.grupo.id }, ana.token);
+  assert.equal(pp.ok, true, pp.error);
+  assert.deepEqual(pp.pasos, { grupos: 1, miembros: 2, plan: false, horarios: false, confirmo: false, entreno: false });
+  assert.equal((await api('primeros_pasos', { grupo_id: 1 }, ana.token)).ok, false);
+
+  // El superadmin ve planes de grupos ajenos; los demás no
+  const [[delGym]] = await pool.query("SELECT id FROM cuerpro_grupos WHERE nombre = 'Los del gym'");
+  assert.equal((await api('admin_plan', { grupo_id: delGym.id }, ana.token)).ok, false);
+  const ajeno = await api('admin_plan', { grupo_id: delGym.id }, jefe.token);
+  assert.equal(ajeno.ok, true, ajeno.error);
+  assert.ok(ajeno.plan.dias.length > 0);
+
+  const resumen = await api('admin_resumen', {}, jefe.token);
+  assert.equal(resumen.ok, true, resumen.error);
+  assert.ok(resumen.usuarios.some(u => u.email === 'ana@test.ar'));
+  assert.ok(resumen.grupos.length >= 1);
+  assert.equal(resumen.usuarios[0].password_hash, undefined);
+
+  // Blanquear: la clave vieja deja de andar, la sesión se cierra y entra con la temporal
+  const anaId = resumen.usuarios.find(u => u.email === 'ana@test.ar').id;
+  const blanqueo = await api('admin_blanquear', { usuario_id: anaId }, jefe.token);
+  assert.match(blanqueo.password, /^[a-z2-9]{8}$/);
+  assert.equal((await api('yo', {}, ana.token)).ok, false);
+  assert.equal((await api('login', { email: 'ana@test.ar', password: 'secreto1' })).ok, false);
+  const temporal = await api('login', { email: 'ana@test.ar', password: blanqueo.password });
+  assert.equal(temporal.ok, true);
+  assert.equal((await api('admin_blanquear', { usuario_id: anaId }, temporal.token)).ok, false);
+
+  // Cambiar la propia contraseña
+  assert.equal((await api('cambiar_password', { actual: 'mal', nueva: 'nueva123' }, temporal.token)).ok, false);
+  assert.equal((await api('cambiar_password', { actual: blanqueo.password, nueva: 'nueva123' }, temporal.token)).ok, true);
+  assert.equal((await api('login', { email: 'ana@test.ar', password: 'nueva123' })).ok, true);
+
+  // Recuperar por email: no revela si la cuenta existe
+  assert.equal((await api('recuperar_pedir', { email: 'nadie@test.ar' })).ok, true);
+  assert.equal(fs.existsSync(buzon), false);
+  assert.equal((await api('recuperar_pedir', { email: 'Ana@test.ar' })).ok, true);
+  const mail = fs.readFileSync(buzon, 'utf8');
+  assert.match(mail, /^To: ana@test\.ar$/m);
+  const codigo = mail.match(/es: (\d{6})/)[1];
+  assert.equal((await api('recuperar_pedir', { email: 'ana@test.ar' })).ok, false); // esperar un minuto
+  const malo = codigo === '000000' ? '111111' : '000000';
+  assert.equal((await api('recuperar_cambiar', { email: 'ana@test.ar', codigo: malo, nueva: 'otra1234' })).ok, false);
+  const listo = await api('recuperar_cambiar', { email: 'ana@test.ar', codigo, nueva: 'otra1234' });
+  assert.equal(listo.ok, true, listo.error);
+  assert.equal((await api('yo', {}, listo.token)).usuario.email, 'ana@test.ar');
+  assert.equal((await api('login', { email: 'ana@test.ar', password: 'otra1234' })).ok, true);
+  // El código no se puede usar dos veces
+  assert.equal((await api('recuperar_cambiar', { email: 'ana@test.ar', codigo, nueva: 'otra5678' })).ok, false);
+
+  // Sin sendmail avisa que pidan el blanqueo
+  process.env.SENDMAIL_PATH = path.join(dir, 'no-existe');
+  await pool.query('DELETE FROM cuerpro_recuperaciones');
+  const sinMail = await api('recuperar_pedir', { email: 'jefe@test.ar' });
+  assert.equal(sinMail.ok, false);
+  assert.match(sinMail.error, /administrador/);
+  fs.rmSync(dir, { recursive: true });
+});
+
+test('espacio Individual para entrenar solo', { skip: !enabled && 'Definí CUERPRO_TEST_DB=1 y DB_NAME' }, async () => {
+  const sol = await api('registro', { nombre: 'Sol', email: 'sol@test.ar', password: 'secreto1' });
+  assert.equal(sol.ok, true, sol.error);
+
+  // Al registrarse ya tiene su Individual, como coach, y una sola vez
+  let yo = await api('yo', {}, sol.token);
+  assert.equal(yo.grupos.length, 1);
+  const ind = yo.grupos[0];
+  assert.equal(ind.individual, true);
+  assert.equal(ind.nombre, 'Individual');
+  assert.equal(ind.rol, 'coach');
+  assert.equal((await api('yo', {}, sol.token)).grupos.length, 1);
+
+  // Puede armar su plan sin crear ningún grupo
+  const [[ej]] = await pool.query('SELECT id FROM cuerpro_ejercicios WHERE grupo_id IS NULL LIMIT 1');
+  const plan = { nombre: 'Mi plan', dias: [{ nombre: 'Día A', ejercicios: [{ ejercicio_id: ej.id, series: 3, repeticiones: '10' }] }] };
+  const guardado = await api('plan_guardar', { grupo_id: ind.id, plan, activar: 1 }, sol.token);
+  assert.equal(guardado.ok, true, guardado.error);
+  assert.equal((await api('plan', { grupo_id: ind.id }, sol.token)).plan.dias.length, 1);
+
+  // Sin encuentros, y nadie se puede sumar con el código
+  assert.equal((await api('encuentro_proximo', { grupo_id: ind.id }, sol.token)).encuentro, null);
+  const otro = await api('registro', { nombre: 'Tomi', email: 'tomi@test.ar', password: 'secreto1' });
+  assert.equal((await api('grupo_unirse', { codigo: ind.codigo_invitacion }, otro.token)).ok, false);
+
+  // Primeros pasos no cuenta el Individual como grupo
+  assert.equal((await api('primeros_pasos', {}, sol.token)).pasos.grupos, 0);
+
+  // Si después crea un grupo, el Individual sigue primero
+  await api('grupo_crear', { nombre: 'Zeta' }, sol.token);
+  yo = await api('yo', {}, sol.token);
+  assert.deepEqual(yo.grupos.map(g => g.individual), [true, false]);
+
+  // Los usuarios de antes que no lo tienen lo reciben al entrar
+  await pool.query('DELETE g FROM cuerpro_grupos g WHERE g.id = ?', [ind.id]);
+  yo = await api('yo', {}, sol.token);
+  assert.equal(yo.grupos.filter(g => g.individual).length, 1);
+});
+
+test('entrenar por tu cuenta suma al grupo', { skip: !enabled && 'Definí CUERPRO_TEST_DB=1 y DB_NAME' }, async () => {
+  const profe = await api('registro', { nombre: 'Profe', email: 'profe@test.ar', password: 'secreto1' });
+  const lu = await api('registro', { nombre: 'Lu', email: 'lu@test.ar', password: 'secreto1' });
+  const g = await api('grupo_crear', { nombre: 'Los Fierros' }, profe.token);
+  await api('grupo_unirse', { codigo: g.grupo.codigo_invitacion }, lu.token);
+  const [[ej]] = await pool.query('SELECT id FROM cuerpro_ejercicios WHERE grupo_id IS NULL LIMIT 1');
+  const plan = { nombre: 'Plan', dias: [{ nombre: 'Piernas', ejercicios: [{ ejercicio_id: ej.id, series: 4, repeticiones: '10' }] }] };
+  await api('plan_guardar', { grupo_id: g.grupo.id, plan, activar: 1 }, profe.token);
+  const dia = (await api('plan', { grupo_id: g.grupo.id }, lu.token)).plan.dias[0];
+
+  // Con el plan del grupo, por su cuenta: suma a la tercera serie y una sola vez
+  const serie = n => api('serie_guardar', { grupo_id: g.grupo.id, dia_id: dia.id, ejercicio_id: ej.id, numero: n, repeticiones: 10, peso: 20 }, lu.token);
+  assert.equal((await serie(1)).sumo, false);
+  assert.equal((await serie(2)).sumo, false);
+  assert.equal((await serie(3)).sumo, true);
+  assert.equal((await serie(4)).sumo, false);
+  let yo = await api('yo', {}, lu.token);
+  assert.equal(yo.nivel.por_grupo.find(p => p.grupo_id === g.grupo.id).puntos, 10);
+
+  // El grupo lo ve, con el día del plan
+  const prox = await api('encuentro_proximo', { grupo_id: g.grupo.id }, profe.token);
+  assert.equal(prox.ok, true, prox.error);
+  assert.deepEqual(prox.por_su_cuenta.map(p => [p.nombre, p.dia]), [['Lu', 'Piernas']]);
+  // Y le recomienda ese día como hecho hoy
+  assert.equal((await api('mis_entrenamientos', { grupo_id: g.grupo.id }, lu.token)).entrenamientos[0].dia_nombre, 'Piernas');
+
+  // Un grupo ajeno no se puede usar
+  const otro = await api('grupo_crear', { nombre: 'Ajeno' }, profe.token);
+  assert.equal((await api('serie_guardar', { grupo_id: otro.grupo.id, ejercicio_id: ej.id, numero: 1, repeticiones: 10 }, lu.token)).ok, false);
+
+  // Si ese mismo día el coach le marca la asistencia, no suma dos veces
+  const [[{ hoy }]] = await pool.query("SELECT DATE_FORMAT(NOW() + INTERVAL 1 MINUTE, '%Y-%m-%d %H:%i') AS hoy");
+  const extra = await api('encuentro_agregar', { grupo_id: g.grupo.id, fecha_hora: hoy }, profe.token);
+  assert.equal(extra.ok, true, extra.error);
+  const [[enc]] = await pool.query('SELECT id FROM cuerpro_encuentros WHERE grupo_id = ? ORDER BY id DESC LIMIT 1', [g.grupo.id]);
+  assert.equal((await api('asistencia', { encuentro_id: enc.id, usuario_id: lu.usuario.id, asistio: 1 }, profe.token)).ok, true);
+  yo = await api('yo', {}, lu.token);
+  assert.equal(yo.nivel.por_grupo.find(p => p.grupo_id === g.grupo.id).puntos, 10);
+
+  // Con su plan Individual también suma
+  const ind = yo.grupos.find(x => x.individual);
+  await api('plan_guardar', { grupo_id: ind.id, plan, activar: 1 }, lu.token);
+  const r = [];
+  for (const n of [1, 2, 3]) r.push((await api('serie_guardar', { grupo_id: ind.id, ejercicio_id: ej.id, numero: n, repeticiones: 10 }, lu.token)).sumo);
+  assert.deepEqual(r, [false, false, true]);
+  assert.equal((await api('yo', {}, lu.token)).nivel.puntos, 20);
+});
+
+test('borrar la cuenta', { skip: !enabled && 'Definí CUERPRO_TEST_DB=1 y DB_NAME' }, async () => {
+  const ana = await api('registro', { nombre: 'Borra', email: 'borra@test.ar', password: 'secreto1' });
+  const leo = await api('registro', { nombre: 'Queda', email: 'queda@test.ar', password: 'secreto1' });
+  const g = await api('grupo_crear', { nombre: 'Compartido' }, ana.token);
+  await api('grupo_unirse', { codigo: g.grupo.codigo_invitacion }, leo.token);
+  const ind = (await api('yo', {}, ana.token)).grupos.find(x => x.individual);
+  // Con un ejercicio propio, un plan y series en su Individual
+  await api('ejercicio_crear', { grupo_id: ind.id, nombre: 'Mío', musculo_principal: 'pecho', equipo: 'maquina' }, ana.token);
+  const [[ej]] = await pool.query("SELECT id FROM cuerpro_ejercicios WHERE nombre = 'Mío'");
+  await api('plan_guardar', { grupo_id: ind.id, activar: 1, plan: { nombre: 'P', dias: [{ nombre: 'A', ejercicios: [{ ejercicio_id: ej.id, series: 3, repeticiones: '10' }] }] } }, ana.token);
+  await api('serie_guardar', { grupo_id: ind.id, ejercicio_id: ej.id, numero: 1, repeticiones: 10 }, ana.token);
+
+  assert.equal((await api('cuenta_borrar', { password: 'mal' }, ana.token)).ok, false);
+  const r = await api('cuenta_borrar', { password: 'secreto1' }, ana.token);
+  assert.equal(r.ok, true, r.error);
+  assert.equal((await api('yo', {}, ana.token)).ok, false);
+  assert.equal((await api('login', { email: 'borra@test.ar', password: 'secreto1' })).ok, false);
+  const [[{ n }]] = await pool.query('SELECT COUNT(*) AS n FROM cuerpro_grupos WHERE id = ?', [ind.id]);
+  assert.equal(n, 0);
+  // El grupo compartido sigue, y el que queda pasa a ser coach
+  const gr = (await api('yo', {}, leo.token)).grupos.find(x => x.id === g.grupo.id);
+  assert.equal(gr.rol, 'coach');
 });

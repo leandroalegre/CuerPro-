@@ -18,14 +18,30 @@ App Expo → https://cuerpro.sistemascloud.ar/api.php
 - Nombres de campos en español, en servidor y app (no repetir el desajuste inglés/español de TimbreWeb).
 
 ## Reglas del dominio
-- Roles por grupo: `coach` y `miembro`. Si el grupo tiene `quien_edita = 'todos'`, todos entran como coach.
+- Roles por grupo: `coach` y `miembro`. El coach hace coach a otros desde Grupos, o prende "Todos son coach" (`quien_edita = 'todos'`): ahí `yo` devuelve rol coach para todos.
 - Alternativa elegida por cualquiera vale para todo el grupo en ese encuentro (`cuerpro_cambios_encuentro`).
 - Asistencia: "voy/no voy" lo marca cada uno; `asistio` solo lo marca un coach y suma 10 puntos.
+- Por su cuenta: `serie_guardar` con `grupo_id` (y `dia_id`) sin encuentro guarda la serie para ese grupo. Con 3 series en el día suma `por_su_cuenta` (10 puntos, igual que ir) una vez por grupo y día; si ese día el coach le marca `asistio`, se quita. Vale también en el Individual. El grupo lo ve en Hoy (`encuentro_proximo.por_su_cuenta`, última semana). Desde Entrenar del Individual se elige "Mi plan" o "Plan de <grupo>".
 - Récord: superar tu propio peso máximo en un ejercicio (la primera vez no cuenta), 15 puntos, una vez por ejercicio por día.
 - Niveles por mes (temporada `YYYY-MM`): Bronce 0, Plata 100, Oro 200, Platino 300, Diamante 380; nivel = máx(nivel por puntos del mes, nivel del mes anterior − 1). Nivel general, suma todos los grupos.
-- Aviso de músculo abandonado: 5 días por defecto, configurable por grupo.
+- Aviso de músculo sin entrenar: por zona (`ZONAS` en server/index.js: piernas, espalda, pecho, hombros, brazos 7 días; abdominales 4; cardio no avisa). El coach cambia los días en Grupos (`dias_por_zona`, JSON). Se muestra en Hoy y Progreso. Ojo: en schema.sql no poner ";" en comentarios.
 - Si decís "no voy", la API devuelve `objetivo`: cuántas asistencias te faltan para el próximo nivel y cuántos entrenamientos quedan en el mes.
-- Encuentros: se generan del horario fijo (`cuerpro_horarios`) al pedir `encuentro_proximo`; el día del plan rota en orden. Hora en `TZ=America/Argentina/Cordoba`.
+- Encuentros: se generan del horario fijo (`cuerpro_horarios`, cada día con su hora) al pedir `encuentro_proximo`; el día del plan rota en orden. Hora en `TZ=America/Argentina/Cordoba`.
+- El coach puede mover (`encuentro_mover`, guarda `fecha_original`), cancelar (`encuentro_cancelar`) o agregar (`encuentro_agregar`) un encuentro puntual sin tocar el horario fijo; se avisa al grupo por push.
+- Al confirmar se puede dejar una `nota` ("llego 15 tarde"); a los coaches les llega por push.
+- Columnas nuevas en tablas que ya existen en producción: agregarlas también a `COLUMNAS_NUEVAS` en `server/index.js`.
+
+- Planes: un grupo puede tener varios y uno activo (`plan_activar`), que es el que se entrena. Editar uno (`plan_guardar` con `plan_id`) crea una versión nueva y archiva la anterior (`archivado = 1`, se conserva por el historial de series); sin `plan_id` es un plan nuevo. `plan_borrar` archiva un plan no activo.
+- Ejercicios del plan: series, repeticiones (texto: "8-10" o "6 min" para los por tiempo), peso sugerido, `carga` (liviano/moderado/pesado), `descanso_seg` y `nota` del coach; `union_siguiente` (superserie/circuito) une el ejercicio con el que sigue, y en Entrenar no hay descanso hasta terminar la vuelta.
+- Cargar un plan escrito a mano: `cd server && node scripts/cargar-plan.js <email del coach> planes/<archivo>.json ["grupo"]` (crea los ejercicios que falten para ese grupo).
+
+- Cuenta: `cambiar_password` (en Grupos → Mi cuenta). Recuperar: `recuperar_pedir` manda un código de 6 números por email con el sendmail del hosting (`SENDMAIL_PATH`, `MAIL_FROM`), vale 30 minutos y 5 intentos, y `recuperar_cambiar` lo canjea. No revela si el email existe.
+- Borrar cuenta (lo exige Google Play): `cuenta_borrar` con `password`, en Grupos → Mi cuenta. Borra al usuario (cascada), los grupos donde quedaba solo (primero sus planes) y, si era el único coach, hace coach al miembro más antiguo. Páginas públicas `web/privacidad.html`, `web/terminos.html` (los planes los cargan los usuarios, no es consejo médico) y `web/borrar-cuenta.html`; al registrarse se aceptan.
+- Superadmin (`cuerpro_usuarios.superadmin`): `admin_resumen` (todos los usuarios y grupos) y `admin_blanquear` (contraseña temporal, cierra sus sesiones). Pantalla `app/admin.tsx`, botón en Grupos → Mi cuenta. Se nombra con `cd server && node scripts/hacer-superadmin.js <email> [--quitar]`. `admin_plan` le muestra el plan de cualquier grupo (solo lectura).
+- Web instalable (PWA): `public/index.html` (plantilla de Expo con manifest y service worker), `public/manifest.webmanifest`, `public/sw.js` (no cachea nada). `components/InstalarApp.tsx` muestra "Instalá CuerPro" en Hoy.
+
+- Individual: cada usuario tiene un grupo `individual = 1` (nombre "Individual", siempre coach) que se crea al registrarse o en `yo` si falta. No tiene encuentros, código (`grupo_unirse` lo ignora) ni propuestas; Hoy muestra el día que toca y Entrenar va directo a "por mi cuenta". `yo` lo devuelve primero; la app arranca en el primer grupo real. Arriba a la derecha `components/SelectorEspacio.tsx` cambia entre Individual y grupos. `primeros_pasos.grupos` no lo cuenta.
+- Primer ingreso: `app/bienvenida.tsx` (una vez por usuario, elige camino solo o en grupo; solo lo lleva al Individual a armar el plan). Después `components/PrimerosPasos.tsx` en Hoy, con los datos de `primeros_pasos`; se guarda en AsyncStorage `cuerpro_inicio_<usuario>`.
 
 ## Pruebas
 - `cd server && CUERPRO_TEST_DB=1 DB_NAME=... npm test`: flujo completo contra MySQL (borra las tablas `cuerpro_*`).

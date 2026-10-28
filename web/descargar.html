@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CuerPro</title>
+  <link rel="icon" href="/favicon.png">
   <style>
     :root { --bg: #0c0d10; --card: #16181d; --borde: #2b2f38; --texto: #f2f3f5; --suave: #a0a6b4; --acento: #ff6b35; }
     * { box-sizing: border-box; }
@@ -21,14 +22,20 @@
 </head>
 <body>
   <main>
-    <h1>CuerPro</h1>
+    <h1><img src="/logo.png" alt="CuerPro" width="260" style="max-width:100%;height:auto"></h1>
     <p>Entrená con tu grupo de amigos: rutinas por músculo, quién va y quién falta, y niveles por temporada.</p>
+
+    <div class="card">
+      <h2>Desde el navegador</h2>
+      <p>Usala sin instalar nada, desde la compu o el celular.</p>
+      <a class="boton" href="/">Abrir CuerPro</a>
+    </div>
 
     <div class="card">
       <h2>Android</h2>
       <p>Bajá el instalador y abrilo desde el celular. Si te lo pide, permití instalar apps de esta fuente.</p>
-      <!-- Reemplazar por el link al .apk que genera `eas build --profile preview --platform android` -->
-      <a class="boton" href="/descargas/cuerpro.apk">Descargar para Android</a>
+      <!-- APK de `eas build --profile preview --platform android`: link directo de Expo (vale 90 días). No subir APKs al hosting, que tiene 5 GB para todos los sitios. -->
+      <a class="boton" href="https://expo.dev/artifacts/eas/_kOo5-vst35FLEq4n4c1OH4p6ylpU-UXwsVB4FQx1bA.apk">Descargar para Android</a>
     </div>
 
     <div class="card">
