@@ -748,6 +748,40 @@ const acciones = {
     return {};
   },
 
+  // Borra la cuenta y todo lo suyo (las tablas borran en cascada). Los grupos donde
+  // quedaba solo se borran, y si era el único coach de un grupo, pasa a serlo el más antiguo.
+  async cuenta_borrar(req) {
+    const usuario = await sesion(req);
+    const [password] = requireParams(req, 'password');
+    const [[fila]] = await pool.query('SELECT password_hash FROM cuerpro_usuarios WHERE id = ?', [usuario.id]);
+    if (!checkPassword(String(password), fila.password_hash)) throw httpError(401, 'La contraseña no es correcta');
+    const [suyos] = await pool.query(
+      `SELECT g.id, g.quien_edita,
+              (SELECT COUNT(*) FROM cuerpro_miembros o WHERE o.grupo_id = g.id AND o.usuario_id <> ?) AS otros,
+              (SELECT COUNT(*) FROM cuerpro_miembros o WHERE o.grupo_id = g.id AND o.usuario_id <> ? AND o.rol = 'coach') AS coaches
+       FROM cuerpro_grupos g JOIN cuerpro_miembros m ON m.grupo_id = g.id WHERE m.usuario_id = ?`,
+      [usuario.id, usuario.id, usuario.id]
+    );
+    for (const g of suyos) {
+      if (g.otros && !g.coaches && g.quien_edita !== 'todos') {
+        await pool.query(
+          `UPDATE cuerpro_miembros SET rol = 'coach' WHERE grupo_id = ? AND usuario_id <> ?
+           ORDER BY created_at, usuario_id LIMIT 1`,
+          [g.id, usuario.id]
+        );
+      }
+    }
+    // Primero el usuario (con sus series), después los grupos que quedaron vacíos
+    await pool.query('DELETE FROM cuerpro_usuarios WHERE id = ?', [usuario.id]);
+    const vacios = suyos.filter(g => !g.otros).map(g => g.id);
+    if (vacios.length) {
+      // Los planes antes que el grupo: el grupo se lleva sus ejercicios propios, que los planes usan
+      await pool.query('DELETE FROM cuerpro_planes WHERE grupo_id IN (?)', [vacios]);
+      await pool.query('DELETE FROM cuerpro_grupos WHERE id IN (?)', [vacios]);
+    }
+    return {};
+  },
+
   // ── Recuperar contraseña: un código de 6 números por email, vale 30 minutos ──
   async recuperar_pedir(req) {
     const [email] = requireParams(req, 'email');

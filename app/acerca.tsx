@@ -49,6 +49,9 @@ export default function AcercaScreen() {
           <Boton titulo="Escribime" onPress={() => escribir('Quiero CuerPro para mi gimnasio o grupo')} style={{ marginTop: Spacing.sm }} />
         </Card>
 
+        <TouchableOpacity onPress={() => Linking.openURL('https://cuerpro.sistemascloud.ar/privacidad.html').catch(() => {})}>
+          <Text style={styles.privacidad}>Política de privacidad</Text>
+        </TouchableOpacity>
         <Text style={styles.version}>{`CuerPro v${APP_VERSION}`}</Text>
       </ScrollView>
     </SafeAreaView>
@@ -73,5 +76,6 @@ const styles = StyleSheet.create({
   },
   email: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginTop: Spacing.md },
   emailTexto: { ...Typography.body, color: Colors.accent, fontWeight: '600' },
+  privacidad: { ...Typography.caption, color: Colors.accent, textAlign: 'center', marginTop: Spacing.md },
   version: { ...Typography.caption, color: Colors.textMuted, textAlign: 'center', marginTop: Spacing.md },
 });

@@ -458,3 +458,27 @@ test('entrenar por tu cuenta suma al grupo', { skip: !enabled && 'Definí CUERPR
   assert.deepEqual(r, [false, false, true]);
   assert.equal((await api('yo', {}, lu.token)).nivel.puntos, 20);
 });
+
+test('borrar la cuenta', { skip: !enabled && 'Definí CUERPRO_TEST_DB=1 y DB_NAME' }, async () => {
+  const ana = await api('registro', { nombre: 'Borra', email: 'borra@test.ar', password: 'secreto1' });
+  const leo = await api('registro', { nombre: 'Queda', email: 'queda@test.ar', password: 'secreto1' });
+  const g = await api('grupo_crear', { nombre: 'Compartido' }, ana.token);
+  await api('grupo_unirse', { codigo: g.grupo.codigo_invitacion }, leo.token);
+  const ind = (await api('yo', {}, ana.token)).grupos.find(x => x.individual);
+  // Con un ejercicio propio, un plan y series en su Individual
+  await api('ejercicio_crear', { grupo_id: ind.id, nombre: 'Mío', musculo_principal: 'pecho', equipo: 'maquina' }, ana.token);
+  const [[ej]] = await pool.query("SELECT id FROM cuerpro_ejercicios WHERE nombre = 'Mío'");
+  await api('plan_guardar', { grupo_id: ind.id, activar: 1, plan: { nombre: 'P', dias: [{ nombre: 'A', ejercicios: [{ ejercicio_id: ej.id, series: 3, repeticiones: '10' }] }] } }, ana.token);
+  await api('serie_guardar', { grupo_id: ind.id, ejercicio_id: ej.id, numero: 1, repeticiones: 10 }, ana.token);
+
+  assert.equal((await api('cuenta_borrar', { password: 'mal' }, ana.token)).ok, false);
+  const r = await api('cuenta_borrar', { password: 'secreto1' }, ana.token);
+  assert.equal(r.ok, true, r.error);
+  assert.equal((await api('yo', {}, ana.token)).ok, false);
+  assert.equal((await api('login', { email: 'borra@test.ar', password: 'secreto1' })).ok, false);
+  const [[{ n }]] = await pool.query('SELECT COUNT(*) AS n FROM cuerpro_grupos WHERE id = ?', [ind.id]);
+  assert.equal(n, 0);
+  // El grupo compartido sigue, y el que queda pasa a ser coach
+  const gr = (await api('yo', {}, leo.token)).grupos.find(x => x.id === g.grupo.id);
+  assert.equal(gr.rol, 'coach');
+});

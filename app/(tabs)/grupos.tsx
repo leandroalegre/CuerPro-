@@ -3,7 +3,7 @@
  * - Mis grupos y cuál está elegido (el Individual es para entrenar solo)
  * - Crear grupo o unirse con código de invitación
  * - El coach carga los horarios fijos del grupo
- * - Mi cuenta: cambiar la contraseña y, si sos superadmin, administrar
+ * - Mi cuenta: cambiar la contraseña, borrar la cuenta y, si sos superadmin, administrar
  */
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
@@ -39,6 +39,8 @@ export default function GruposScreen() {
   const [cambiandoClave, setCambiandoClave] = useState(false);
   const [claveActual, setClaveActual] = useState('');
   const [claveNueva, setClaveNueva] = useState('');
+  const [borrandoCuenta, setBorrandoCuenta] = useState(false);
+  const [claveBorrar, setClaveBorrar] = useState('');
 
   const cargarDetalle = useCallback(async () => {
     if (!token || !grupo) return setDetalle(null);
@@ -58,6 +60,23 @@ export default function GruposScreen() {
       setClaveActual('');
       setClaveNueva('');
       Alert.alert('Listo', 'Tu contraseña cambió.');
+    } catch (e: any) {
+      Alert.alert('No se pudo', e.message);
+    }
+  };
+
+  const borrarCuenta = async () => {
+    const texto = 'Se borran tu cuenta, tus series, tu progreso y tu plan Individual. No se puede deshacer.';
+    const seguro = Platform.OS === 'web'
+      ? window.confirm(`¿Borrar tu cuenta?\n\n${texto}`)
+      : await new Promise<boolean>(ok => Alert.alert('¿Borrar tu cuenta?', texto, [
+        { text: 'Cancelar', style: 'cancel', onPress: () => ok(false) },
+        { text: 'Borrar', style: 'destructive', onPress: () => ok(true) },
+      ]));
+    if (!seguro) return;
+    try {
+      await api('cuenta_borrar', { password: claveBorrar }, token);
+      await salir();
     } catch (e: any) {
       Alert.alert('No se pudo', e.message);
     }
@@ -334,6 +353,20 @@ export default function GruposScreen() {
           </View>
         ) : (
           <Boton titulo="Cambiar contraseña" tipo="secundario" onPress={() => setCambiandoClave(true)} style={{ marginTop: Spacing.sm }} />
+        )}
+        {borrandoCuenta ? (
+          <View style={{ marginTop: Spacing.sm }}>
+            <Texto muted>Para borrar tu cuenta y todos tus datos, poné tu contraseña.</Texto>
+            <Campo placeholder="Contraseña" value={claveBorrar} onChangeText={setClaveBorrar} secureTextEntry />
+            <View style={styles.compartir}>
+              <Boton titulo="Cancelar" tipo="secundario" onPress={() => { setBorrandoCuenta(false); setClaveBorrar(''); }} style={{ flex: 1 }} />
+              <Boton titulo="Borrar cuenta" tipo="peligro" onPress={borrarCuenta} disabled={!claveBorrar} style={{ flex: 1 }} />
+            </View>
+          </View>
+        ) : (
+          <TouchableOpacity onPress={() => setBorrandoCuenta(true)} style={{ marginTop: Spacing.sm }}>
+            <Text style={[styles.rol, { color: Colors.error }]}>Borrar mi cuenta</Text>
+          </TouchableOpacity>
         )}
         {usuario?.superadmin && (
           <Boton titulo="Administrar usuarios y grupos" onPress={() => router.push('/admin')} style={{ marginTop: Spacing.sm }} />
