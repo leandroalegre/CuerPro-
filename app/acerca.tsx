@@ -5,7 +5,8 @@
  */
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { Image, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, Linking, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Text } from '../components/Letra';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Boton, Card, pantalla } from '../components/ui';
 import { APP_VERSION, DESARROLLADOR, EMAIL_DESARROLLADOR, ESLOGAN, URL_PRIVACIDAD, URL_TERMINOS } from '../constants/app';

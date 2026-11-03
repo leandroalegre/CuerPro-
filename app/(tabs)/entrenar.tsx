@@ -17,7 +17,8 @@
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Alert, Platform, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
+import { Alert, Platform, StyleSheet, TouchableOpacity, Vibration, View } from 'react-native';
+import { Text } from '../../components/Letra';
 import { NestableDraggableFlatList, NestableScrollContainer, ScaleDecorator } from 'react-native-draggable-flatlist';
 import { CambiarDiaEncuentro } from '../../components/CambiarDiaEncuentro';
 import { AvisoRecuperacion, colorRecuperacion } from '../../components/Recuperacion';
@@ -431,6 +432,7 @@ function EjercicioCard({
   const [hechas, setHechas] = useState<{ reps: number; peso: number; record: boolean }[]>([]);
   const [guardando, setGuardando] = useState(false);
   const [finDescanso, setFinDescanso] = useState<number | null>(null);
+  const [saltado, setSaltado] = useState(false); // no se hace hoy: queda chiquito, se puede deshacer
   const porTiempo = esPorTiempo(ej.repeticiones);
 
   // Por mi cuenta, la alternativa es solo para vos y no se guarda
@@ -483,6 +485,27 @@ function EjercicioCard({
     }
   };
 
+  const terminado = porTiempo ? hechas.length > 0 : hechas.length >= ej.series;
+
+  if (saltado) {
+    return (
+      <Card style={activo ? { ...styles.saltado, borderColor: Colors.accent } : styles.saltado}>
+        <View style={styles.cabecera}>
+          <TouchableOpacity onPressIn={drag} disabled={activo} hitSlop={12} style={styles.manija} accessibilityLabel="Arrastrar para mover">
+            <Ionicons name="reorder-three" size={26} color={Colors.textMuted} />
+          </TouchableOpacity>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.saltadoNombre}>{actual.nombre}</Text>
+            <Text style={styles.saltadoTexto}>{hechas.length ? `Saltado después de ${hechas.length} ${hechas.length === 1 ? 'serie' : 'series'}` : 'Saltado hoy'}</Text>
+          </View>
+          <TouchableOpacity onPress={() => setSaltado(false)} hitSlop={8} style={styles.botonChico}>
+            <Text style={styles.botonChicoTexto}>Deshacer</Text>
+          </TouchableOpacity>
+        </View>
+      </Card>
+    );
+  }
+
   return (
     <Card style={activo ? { borderColor: Colors.accent } : undefined}>
       <View style={styles.cabecera}>
@@ -492,6 +515,16 @@ function EjercicioCard({
         <View style={{ flex: 1, minWidth: 0 }}>
           <Titulo>{actual.nombre}</Titulo>
         </View>
+        {!terminado && (
+          <TouchableOpacity
+            onPress={() => { setSaltado(true); setFinDescanso(null); setVerAlternativas(false); }}
+            hitSlop={8}
+            style={[styles.botonChico, { marginBottom: Spacing.sm }]}
+            accessibilityLabel={`Saltar ${actual.nombre}`}
+          >
+            <Text style={styles.botonChicoTexto}>Saltar</Text>
+          </TouchableOpacity>
+        )}
       </View>
       {propia ? (
         <Texto muted>{`En lugar de ${ej.nombre}`}</Texto>
@@ -620,6 +653,11 @@ const styles = StyleSheet.create({
   modoTexto: { ...Typography.label, color: Colors.textPrimary },
   fila: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'flex-start', marginTop: Spacing.md },
   campo: { flex: 1, minWidth: 0, marginBottom: 0 },
-  boton: { width: 104, paddingVertical: 12 },
+  boton: { minWidth: 104, paddingVertical: 12 },
   serie: { ...Typography.body, color: Colors.success, marginTop: Spacing.xs },
+  botonChico: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: Radius.full, backgroundColor: Colors.bgMuted },
+  botonChicoTexto: { ...Typography.label, color: Colors.textSecondary, fontWeight: '600' },
+  saltado: { opacity: 0.6, paddingVertical: Spacing.sm },
+  saltadoNombre: { ...Typography.body, color: Colors.textSecondary, textDecorationLine: 'line-through' },
+  saltadoTexto: { ...Typography.caption, color: Colors.textMuted },
 });

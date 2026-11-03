@@ -6,7 +6,9 @@
  */
 import { useState } from 'react';
 import { router } from 'expo-router';
-import { Alert, Image, KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { Alert, Image, KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { BotonLetra } from '../components/BotonLetra';
+import { Text } from '../components/Letra';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Boton, Campo, Card } from '../components/ui';
 import { APP_VERSION, DESARROLLADOR, URL_PRIVACIDAD, URL_TERMINOS } from '../constants/app';
@@ -74,6 +76,9 @@ export default function LoginScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.contenido} keyboardShouldPersistTaps="handled">
+          <View style={{ alignItems: 'flex-end' }}>
+            <BotonLetra />
+          </View>
           <Image source={require('../assets/images/logo.png')} style={styles.logo} resizeMode="contain" accessibilityLabel="CuerPro" />
           <Text style={styles.subtitulo}>Entrená con tu grupo, seguí tu progreso.</Text>
 

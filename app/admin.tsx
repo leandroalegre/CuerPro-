@@ -8,7 +8,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Text } from '../components/Letra';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Boton, Campo, Card, Insignia, pantalla, Texto, Titulo } from '../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../constants/theme';

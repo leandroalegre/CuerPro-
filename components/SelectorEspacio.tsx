@@ -4,7 +4,8 @@
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Text } from './Letra';
 import { Colors, Radius, Spacing, Typography } from '../constants/theme';
 import { useSesion } from '../hooks/useSesion';
 

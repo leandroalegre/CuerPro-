@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StyleSheet, View } from 'react-native';
+import { LetraProvider } from '../components/Letra';
 import { Colors } from '../constants/theme';
 import { useNotificaciones } from '../hooks/useNotificaciones';
 import { SesionProvider, useSesion } from '../hooks/useSesion';
@@ -67,10 +68,12 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider value={tema}>
-        <SesionProvider>
-          <StatusBar style="light" />
-          <Navegacion />
-        </SesionProvider>
+        <LetraProvider>
+          <SesionProvider>
+            <StatusBar style="light" />
+            <Navegacion />
+          </SesionProvider>
+        </LetraProvider>
       </ThemeProvider>
     </GestureHandlerRootView>
   );

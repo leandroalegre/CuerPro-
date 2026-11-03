@@ -8,7 +8,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Linking, Platform, ScrollView, Share, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Linking, Platform, ScrollView, Share, StyleSheet, Switch, TouchableOpacity, View } from 'react-native';
+import { ElegirLetra } from '../../components/BotonLetra';
+import { Text } from '../../components/Letra';
 import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo } from '../../components/ui';
 import { APP_VERSION, DESARROLLADOR, URL_DESCARGA } from '../../constants/app';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
@@ -342,6 +344,8 @@ export default function GruposScreen() {
       <Card>
         <Titulo>Mi cuenta</Titulo>
         <Texto muted>{`${usuario?.nombre ?? ''} · ${usuario?.email ?? ''}`}</Texto>
+        <Text style={[styles.rol, { marginTop: Spacing.md }]}>Tamaño de letra</Text>
+        <ElegirLetra />
         {cambiandoClave ? (
           <View style={{ marginTop: Spacing.sm }}>
             <Campo placeholder="Contraseña actual" value={claveActual} onChangeText={setClaveActual} secureTextEntry />

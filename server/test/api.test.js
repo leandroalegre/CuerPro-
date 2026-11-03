@@ -398,7 +398,16 @@ test('espacio Individual para entrenar solo', { skip: !enabled && 'Definí CUERP
   assert.equal((await api('grupo_unirse', { codigo: ind.codigo_invitacion }, otro.token)).ok, false);
 
   // Primeros pasos no cuenta el Individual como grupo
-  assert.equal((await api('primeros_pasos', {}, sol.token)).pasos.grupos, 0);
+  let pp = await api('primeros_pasos', {}, sol.token);
+  assert.equal(pp.pasos.grupos, 0);
+  // La guía se ve una vez por cuenta: queda guardada en el servidor
+  assert.equal(pp.inicio, null);
+  const ig = await api('inicio_guardar', { inicio: { visto: true, camino: 'solo', cerrado: false } }, sol.token);
+  assert.equal(ig.inicio.visto, true);
+  assert.match(ig.inicio.desde, /^\d{4}-\d{2}-\d{2}$/);
+  await api('inicio_guardar', { inicio: JSON.stringify({ cerrado: true, camino: 'raro' }) }, sol.token);
+  pp = await api('primeros_pasos', {}, sol.token);
+  assert.deepEqual({ ...pp.inicio, desde: undefined }, { visto: true, camino: 'solo', cerrado: true, desde: undefined });
 
   // Si después crea un grupo, el Individual sigue primero
   await api('grupo_crear', { nombre: 'Zeta' }, sol.token);

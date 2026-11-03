@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Text } from './Letra';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Radius, Spacing, Typography } from '../constants/theme';
 import { Ejercicio, EQUIPO } from '../lib/api';

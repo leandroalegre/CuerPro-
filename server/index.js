@@ -91,6 +91,9 @@ const COLUMNAS_NUEVAS = [
     WHERE g.nombre = 'Mi entrenamiento' AND (SELECT COUNT(*) FROM cuerpro_miembros m WHERE m.grupo_id = g.id) = 1`],
   ['cuerpro_planes', 'archivado', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER publicado',
    'UPDATE cuerpro_planes SET archivado = 1 WHERE activo = 0'],
+  // La guía de primeros pasos ya la vieron los que usaban la app antes de guardarla acá
+  ['cuerpro_usuarios', 'inicio', 'VARCHAR(255) DEFAULT NULL AFTER superadmin',
+   `UPDATE cuerpro_usuarios SET inicio = '{"visto":true,"cerrado":true}'`],
 ];
 
 async function initTables() {
@@ -168,6 +171,11 @@ function ok(res, data) {
 }
 function err(res, msg, code = 400) {
   return res.status(code).json({ ok: false, error: msg });
+}
+// Un objeto que llega como texto JSON o ya armado; null si no se entiende
+function leerJSON(v) {
+  if (v && typeof v === 'object') return v;
+  try { const o = JSON.parse(v); return o && typeof o === 'object' ? o : null; } catch { return null; }
 }
 function getParam(req, key) {
   return req.body?.[key] ?? req.query?.[key];
@@ -984,7 +992,23 @@ const acciones = {
     }
     const [[serie]] = await pool.query('SELECT 1 AS si FROM cuerpro_series WHERE usuario_id = ? LIMIT 1', [usuario.id]);
     pasos.entreno = !!serie;
-    return { pasos };
+    const [[{ inicio }]] = await pool.query('SELECT inicio FROM cuerpro_usuarios WHERE id = ?', [usuario.id]);
+    return { pasos, inicio: leerJSON(inicio) };
+  },
+
+  // La bienvenida y la tarjeta de primeros pasos se ven una sola vez por cuenta,
+  // en cualquier teléfono: acá se guarda si ya la vio, el camino y si la cerró
+  async inicio_guardar(req) {
+    const usuario = await sesion(req);
+    const cambios = leerJSON(getParam(req, 'inicio')) ?? {};
+    const [[fila]] = await pool.query('SELECT inicio FROM cuerpro_usuarios WHERE id = ?', [usuario.id]);
+    const inicio = { ...(leerJSON(fila.inicio) ?? {}) };
+    if ('visto' in cambios) inicio.visto = !!cambios.visto;
+    if ('cerrado' in cambios) inicio.cerrado = !!cambios.cerrado;
+    if (['grupo', 'solo', null].includes(cambios.camino)) inicio.camino = cambios.camino;
+    if (inicio.visto && !inicio.desde) inicio.desde = fechaLocal();
+    await pool.query('UPDATE cuerpro_usuarios SET inicio = ? WHERE id = ?', [JSON.stringify(inicio), usuario.id]);
+    return { inicio };
   },
 
   async push_token(req) {

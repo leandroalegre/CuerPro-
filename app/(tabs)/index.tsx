@@ -12,7 +12,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, RefreshControl, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Text } from '../../components/Letra';
 import { Boton, Campo, Card, CardDestacada, Etiqueta, Insignia, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { CambiarDiaEncuentro } from '../../components/CambiarDiaEncuentro';

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Alert, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Text } from './Letra';
 import { Colors, Radius, Spacing, Typography } from '../constants/theme';
 import { useSesion } from '../hooks/useSesion';
 import { api, Plan } from '../lib/api';

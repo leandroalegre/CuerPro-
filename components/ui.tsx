@@ -1,14 +1,6 @@
 import { ReactNode } from 'react';
-import {
-  ActivityIndicator,
-  StyleSheet,
-  Text,
-  TextInput,
-  TextInputProps,
-  TouchableOpacity,
-  View,
-  ViewStyle,
-} from 'react-native';
+import { ActivityIndicator, StyleSheet, TextInput, TextInputProps, TouchableOpacity, View, ViewStyle } from 'react-native';
+import { Text, useLetra } from './Letra';
 import { Colors, Radius, Spacing, Typography } from '../constants/theme';
 
 export function Card({ children, style }: { children: ReactNode; style?: ViewStyle }) {
@@ -84,7 +76,8 @@ export function Boton({
 }
 
 export function Campo(props: TextInputProps) {
-  return <TextInput placeholderTextColor={Colors.textMuted} {...props} style={[styles.campo, props.style]} />;
+  const { tam } = useLetra();
+  return <TextInput placeholderTextColor={Colors.textMuted} {...props} style={[styles.campo, { fontSize: tam(16) }, props.style]} />;
 }
 
 export function Vacio({ texto }: { texto: string }) {

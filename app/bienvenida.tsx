@@ -7,7 +7,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Text } from '../components/Letra';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Camino, guardarInicio } from '../components/PrimerosPasos';
 import { Boton } from '../components/ui';
@@ -33,14 +34,14 @@ const PASOS: Record<Camino, { icono: keyof typeof Ionicons.glyphMap; texto: stri
 };
 
 export default function BienvenidaScreen() {
-  const { usuario, grupos, elegirGrupo } = useSesion();
+  const { token, usuario, grupos, elegirGrupo } = useSesion();
   const [paso, setPaso] = useState(0);
   const [camino, setCamino] = useState<Camino | null>(null);
   const individual = grupos.find(g => g.individual);
   const deVerdad = grupos.filter(g => !g.individual);
 
   const terminar = async (destino: '/' | '/grupos' | '/plan') => {
-    if (usuario) await guardarInicio(usuario.id, { visto: true, camino, cerrado: false });
+    if (usuario) await guardarInicio(usuario.id, { visto: true, camino, cerrado: false }, token);
     router.replace(destino);
   };
 

@@ -1,19 +1,23 @@
 /**
- * Primeros pasos: la bienvenida se ve una vez por usuario y después queda
+ * Primeros pasos: la bienvenida se ve una vez por cuenta y después queda
  * una tarjeta en Hoy con lo que falta hacer, que se va tildando sola.
+ * Se guarda en el servidor (inicio_guardar), así no vuelve a salir en otro
+ * teléfono ni al reinstalar. La tarjeta se va al cerrarla o a la semana.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { Href, router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Text } from './Letra';
 import { Colors, Spacing, Typography } from '../constants/theme';
 import { useSesion } from '../hooks/useSesion';
 import { api } from '../lib/api';
 import { Card } from './ui';
 
 export type Camino = 'grupo' | 'solo';
-interface Inicio { visto: boolean; camino: Camino | null; cerrado: boolean }
+interface Inicio { visto: boolean; camino: Camino | null; cerrado: boolean; desde?: string }
+const DIAS_TARJETA = 7;
 interface Pasos { grupos: number; miembros: number; plan: boolean; horarios: boolean; confirmo: boolean; entreno: boolean }
 
 const clave = (usuarioId: number) => `cuerpro_inicio_${usuarioId}`;
@@ -26,9 +30,15 @@ export async function leerInicio(usuarioId: number): Promise<Inicio> {
   return { visto: false, camino: null, cerrado: false };
 }
 
-export async function guardarInicio(usuarioId: number, cambios: Partial<Inicio>) {
+export async function guardarInicio(usuarioId: number, cambios: Partial<Inicio>, token: string | null) {
   const actual = await leerInicio(usuarioId);
   await AsyncStorage.setItem(clave(usuarioId), JSON.stringify({ ...actual, ...cambios })).catch(() => {});
+  if (token) await api('inicio_guardar', { inicio: cambios }, token).catch(() => {});
+}
+
+function pasoLaSemana(desde?: string) {
+  if (!desde) return false;
+  return Date.now() - new Date(`${desde}T00:00:00`).getTime() > DIAS_TARJETA * 86400000;
 }
 
 interface Paso { texto: string; detalle: string; hecho: boolean; ir?: Href }
@@ -69,17 +79,31 @@ export function PrimerosPasos() {
 
   useFocusEffect(useCallback(() => {
     if (!token || !usuario) return;
-    leerInicio(usuario.id).then(i => {
+    let vigente = true;
+    (async () => {
+      const local = await leerInicio(usuario.id);
+      let delServidor: Partial<Inicio> | null = null;
+      try {
+        const d = await api<{ pasos: Pasos; inicio: Partial<Inicio> | null }>('primeros_pasos', grupo ? { grupo_id: grupo.id } : {}, token);
+        if (!vigente) return;
+        setPasos(d.pasos);
+        delServidor = d.inicio;
+      } catch {}
+      if (!vigente) return;
+      const i: Inicio = { ...local, ...(delServidor ?? {}) };
+      // Lo que se vio en este teléfono antes de guardarse en el servidor también cuenta
+      if (local.visto && !delServidor?.visto) {
+        i.visto = true;
+        guardarInicio(usuario.id, { visto: true, camino: local.camino, cerrado: local.cerrado }, token);
+      }
       setInicio(i);
       // La primera vez, la bienvenida
       if (!i.visto) router.push('/bienvenida');
-    });
-    api<{ pasos: Pasos }>('primeros_pasos', grupo ? { grupo_id: grupo.id } : {}, token)
-      .then(d => setPasos(d.pasos))
-      .catch(() => {});
+    })();
+    return () => { vigente = false; };
   }, [token, usuario?.id, grupo?.id]));
 
-  if (!usuario || !inicio?.visto || inicio.cerrado || !pasos) return null;
+  if (!usuario || !inicio?.visto || inicio.cerrado || pasoLaSemana(inicio.desde) || !pasos) return null;
   // Mirando un grupo de verdad, los pasos son los del grupo aunque haya elegido entrenar solo
   const enIndividual = !!grupo?.individual;
   const camino: Camino = !enIndividual ? 'grupo' : inicio.camino ?? (pasos.grupos ? 'grupo' : 'solo');
@@ -89,7 +113,7 @@ export function PrimerosPasos() {
   if (hechos === lista.length) return null;
 
   const cerrar = async () => {
-    await guardarInicio(usuario.id, { cerrado: true });
+    await guardarInicio(usuario.id, { cerrado: true }, token);
     setInicio({ ...inicio, cerrado: true });
   };
 

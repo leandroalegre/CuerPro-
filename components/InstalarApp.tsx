@@ -3,7 +3,8 @@
  * Android/compu: usa el aviso del navegador. iPhone: explica cómo agregarla desde Compartir.
  */
 import { useEffect, useState } from 'react';
-import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Text } from './Letra';
 import { Colors, Spacing, Typography } from '../constants/theme';
 import { Boton, Card } from './ui';
 

@@ -6,7 +6,8 @@
  */
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Image, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { Text } from '../../components/Letra';
 import { Card, Etiqueta, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, NivelColor, NivelMedalla, Radius, Spacing, Typography } from '../../constants/theme';
 import { useSesion } from '../../hooks/useSesion';

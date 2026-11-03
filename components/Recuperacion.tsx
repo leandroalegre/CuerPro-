@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from './Letra';
 import { Colors, Radius, Spacing, Typography } from '../constants/theme';
 import { musculoLindo, Recuperacion, textoRecuperacion } from '../lib/api';
 

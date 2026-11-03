@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS cuerpro_usuarios (
   email         VARCHAR(150) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   superadmin    TINYINT(1) NOT NULL DEFAULT 0,
+  inicio        VARCHAR(255) DEFAULT NULL,
   foto_url      VARCHAR(255) DEFAULT NULL,
   created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uniq_email (email)
