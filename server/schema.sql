@@ -189,6 +189,21 @@ CREATE TABLE IF NOT EXISTS cuerpro_series (
   FOREIGN KEY (ejercicio_id) REFERENCES cuerpro_ejercicios(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Día del plan que alguien hizo y no anotó (lo marca después, sin series)
+CREATE TABLE IF NOT EXISTS cuerpro_dias_hechos (
+  id         INT AUTO_INCREMENT PRIMARY KEY,
+  usuario_id INT NOT NULL,
+  grupo_id   INT NOT NULL,
+  dia_id     INT NOT NULL,
+  fecha      DATE NOT NULL,
+  fecha_hora DATETIME NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_usuario_grupo_fecha (usuario_id, grupo_id, fecha),
+  FOREIGN KEY (usuario_id) REFERENCES cuerpro_usuarios(id)  ON DELETE CASCADE,
+  FOREIGN KEY (grupo_id)   REFERENCES cuerpro_grupos(id)    ON DELETE CASCADE,
+  FOREIGN KEY (dia_id)     REFERENCES cuerpro_plan_dias(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Propuestas de cambios al plan que hacen los miembros
 CREATE TABLE IF NOT EXISTS cuerpro_propuestas (
   id         INT AUTO_INCREMENT PRIMARY KEY,

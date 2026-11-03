@@ -9,23 +9,35 @@
  *   los récords cuentan igual, la asistencia no
  * - En el Individual siempre es "por mi cuenta", con tu plan o con el de uno de tus grupos
  * - Por tu cuenta con el plan de un grupo, desde 3 series suma como ir (el grupo lo ve en Hoy)
+ * - Por tu cuenta se elige qué día del plan y cuándo lo hiciste: hoy o un día anterior que te
+ *   olvidaste de anotar (con series, o "Ya lo hice" sin series), así lo que te toca avanza
+ * - Al lado de cada músculo, cuánto se recuperó desde la última vez
+ * - Con el grupo, el coach puede cambiar qué día del plan se hace en el encuentro
  */
-import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Alert, Platform, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
 import { NestableDraggableFlatList, NestableScrollContainer, ScaleDecorator } from 'react-native-draggable-flatlist';
+import { CambiarDiaEncuentro } from '../../components/CambiarDiaEncuentro';
+import { AvisoRecuperacion, colorRecuperacion } from '../../components/Recuperacion';
 import { Boton, Campo, Card, CardDestacada, Etiqueta, Insignia, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useEncuentro } from '../../hooks/useEncuentro';
+import { useRecuperacion } from '../../hooks/useRecuperacion';
 import { useSesion } from '../../hooks/useSesion';
 import { aerobico, loMasAbandonado, MINUTOS, minutosTotal, ModoCorto, MODOS_CORTOS, versionCorta } from '../../lib/pocoTiempo';
-import { api, Ejercicio, EjercicioRutina, EQUIPO, esPorTiempo, Plan, resumenEjercicio } from '../../lib/api';
+import { api, Ejercicio, EjercicioRutina, EQUIPO, esPorTiempo, fechaHaceDias, Plan, Recuperacion, resumenEjercicio } from '../../lib/api';
 
 export default function EntrenarScreen() {
   const { token, grupo, grupos } = useSesion();
   const { encuentro, recargar } = useEncuentro();
-  const params = useLocalSearchParams<{ modo?: string }>();
+  const params = useLocalSearchParams<{ modo?: string; fecha?: string }>();
+  const recuperacion = useRecuperacion();
+  // Cuándo lo hiciste: 0 hoy, 1 ayer… (para anotar un día que te olvidaste)
+  const [haceDias, setHaceDias] = useState(0);
+  const fecha = haceDias ? fechaHaceDias(haceDias) : null;
+  const [marcando, setMarcando] = useState(false);
   const [soloElegido, setSolo] = useState(false);
   const solo = soloElegido || !!grupo?.individual;
   // Desde el Individual se puede hacer el plan de un grupo: cuenta para ese grupo
@@ -113,7 +125,9 @@ export default function EntrenarScreen() {
   // Desde Hoy, "Entrenar por mi cuenta" llega con ?modo=solo
   useFocusEffect(useCallback(() => {
     if (params.modo === 'solo') setSolo(true);
-  }, [params.modo]));
+    // Una sola vez: si no, cada vez que volvés a la pestaña vuelve a "Ayer"
+    if (params.fecha === 'ayer') { setHaceDias(1); router.setParams({ fecha: undefined }); }
+  }, [params.modo, params.fecha]));
 
   const cargarPlan = useCallback(async () => {
     if (!token || !grupoPlan) return;
@@ -133,6 +147,36 @@ export default function EntrenarScreen() {
   }, [solo, cargarPlan]));
 
   const dia = plan?.dias.find(d => d.id === diaId);
+
+  // "Ya lo hice": marca el día del plan como hecho en esa fecha, sin series (no suma puntos)
+  const marcarHecho = async () => {
+    if (!dia || !grupoPlan) return;
+    setMarcando(true);
+    try {
+      await api('dia_hecho', { grupo_id: grupoPlan.id, dia_id: dia.id, ...(fecha && { fecha }) }, token);
+      const hist = await api<Historial>('mis_entrenamientos', { grupo_id: grupoPlan.id }, token);
+      setHistorial(hist);
+      setDiaId(hist.recomendado?.dia_id ?? dia.id);
+      setHaceDias(0);
+      recuperacion.recargar();
+      avisar('Listo', `Anotamos ${dia.nombre} ${fecha ? `el ${fechaCorta(fecha)}` : 'hoy'}.${hist.recomendado ? ` Ahora te toca ${hist.recomendado.nombre}.` : ''}`);
+    } catch (e: any) {
+      avisar('No se pudo', e.message);
+    } finally {
+      setMarcando(false);
+    }
+  };
+
+  const desmarcar = async (f: string) => {
+    if (!grupoPlan) return;
+    try {
+      await api('dia_hecho', { grupo_id: grupoPlan.id, fecha: f, borrar: 1 }, token);
+      setHistorial(await api<Historial>('mis_entrenamientos', { grupo_id: grupoPlan.id }, token));
+      recuperacion.recargar();
+    } catch (e: any) {
+      avisar('No se pudo', e.message);
+    }
+  };
 
   return (
     <NestableScrollContainer
@@ -161,12 +205,17 @@ export default function EntrenarScreen() {
             <Text style={styles.diaMeta}>
               {`${armar(encuentro.rutina).rutina.length} ejercicios · ~${minutosTotal(armar(encuentro.rutina).rutina)} min · arrastrá ≡ para cambiar el orden`}
             </Text>
+            <AvisoRecuperacion lista={recuperacion.deEjercicios(armar(encuentro.rutina).rutina)} />
+            {grupo?.rol === 'coach' && encuentro.dia && !corto && (
+              <CambiarDiaEncuentro encuentroId={encuentro.id} diaId={encuentro.dia.id} onCambio={recargar} />
+            )}
           </CardDestacada>
           {pocoTiempo}
           <ListaRutina
             key={corto ? `${corto.modo}-${corto.minutos}` : 'plan'}
             rutina={armar(encuentro.rutina).rutina}
             encuentroId={encuentro.id}
+            recuperacion={recuperacion.lista}
             onCambio={recargar}
           />
         </>
@@ -200,7 +249,12 @@ export default function EntrenarScreen() {
               {historial.entrenamientos.map(e => (
                 <View key={e.fecha} style={styles.filaHistorial}>
                   <Text style={styles.fechaHistorial}>{fechaCorta(e.fecha)}</Text>
-                  <Text style={styles.textoHistorial} numberOfLines={1}>{e.dia_nombre ?? e.musculos.join(', ')}</Text>
+                  <Text style={styles.textoHistorial} numberOfLines={1}>{`${e.dia_nombre ?? e.musculos.join(', ')}${e.marcado ? ' (sin series)' : ''}`}</Text>
+                  {e.marcado && (
+                    <TouchableOpacity onPress={() => desmarcar(e.fecha)} hitSlop={10} accessibilityLabel="Desmarcar">
+                      <Ionicons name="close-circle-outline" size={18} color={Colors.textMuted} />
+                    </TouchableOpacity>
+                  )}
                 </View>
               ))}
             </Card>
@@ -227,16 +281,40 @@ export default function EntrenarScreen() {
               />
             ))}
           </View>
+          <Etiqueta>¿Qué día lo anotás?</Etiqueta>
+          <View style={styles.modos}>
+            {[0, 1, 2, 3, 4, 5, 6].map(n => (
+              <Modo key={n} texto={n === 0 ? 'Hoy' : n === 1 ? 'Ayer' : fechaCorta(fechaHaceDias(n))} activo={haceDias === n} onPress={() => setHaceDias(n)} />
+            ))}
+          </View>
+          {!!fecha && (
+            <Texto muted>{`Lo anotás el ${fechaCorta(fecha)}. Anotá las series que te acuerdes (con 3 suma los puntos de ese día) o tocá "Ya lo hice" si no te acordás los pesos.`}</Texto>
+          )}
+          {dia && <AvisoRecuperacion lista={haceDias ? [] : recuperacion.deEjercicios(dia.ejercicios)} />}
+          {dia && (fecha ? (
+            <Boton
+              titulo={`Ya lo hice el ${fechaCorta(fecha)} (sin anotar series)`}
+              tipo="secundario"
+              onPress={marcarHecho}
+              cargando={marcando}
+              style={{ marginVertical: Spacing.sm }}
+            />
+          ) : (
+            <TouchableOpacity onPress={marcarHecho} disabled={marcando} style={{ marginBottom: Spacing.md }}>
+              <Text style={[styles.modoTexto, { color: Colors.accent }]}>Ya lo hice hoy, marcarlo sin anotar series</Text>
+            </TouchableOpacity>
+          ))}
           {pocoTiempo}
           {dia && corto && (
             <Texto muted>{`${armar(dia.ejercicios).titulo}${armar(dia.ejercicios).nombre ? `: ${armar(dia.ejercicios).nombre}` : ''} · ${armar(dia.ejercicios).rutina.length} ejercicios · ~${minutosTotal(armar(dia.ejercicios).rutina)} min`}</Texto>
           )}
           {dia && (
             <ListaRutina
-              key={`${dia.id}-${corto ? `${corto.modo}-${corto.minutos}` : 'plan'}`}
+              key={`${dia.id}-${fecha ?? 'hoy'}-${corto ? `${corto.modo}-${corto.minutos}` : 'plan'}`}
               rutina={armar(dia.ejercicios).rutina}
               encuentroId={null}
-              cuenta={{ grupoId: grupoPlan.id, diaId: dia.id, nombre: grupoPlan.individual ? null : grupoPlan.nombre }}
+              recuperacion={haceDias ? [] : recuperacion.lista}
+              cuenta={{ grupoId: grupoPlan.id, diaId: dia.id, nombre: grupoPlan.individual ? null : grupoPlan.nombre, fecha }}
               onCambio={() => {}}
             />
           )}
@@ -247,7 +325,7 @@ export default function EntrenarScreen() {
 }
 
 interface Historial {
-  entrenamientos: { fecha: string; dia_id: number | null; dia_nombre: string | null; musculos: string[] }[];
+  entrenamientos: { fecha: string; dia_id: number | null; dia_nombre: string | null; musculos: string[]; marcado?: boolean }[];
   recomendado: { dia_id: number; nombre: string; texto: string } | null;
 }
 
@@ -277,17 +355,20 @@ function Modo({ texto, activo, onPress }: { texto: string; activo: boolean; onPr
 
 // La rutina como tarjetas que se arrastran desde ≡; el orden es solo para vos
 // Por tu cuenta: con qué grupo y qué día del plan (nombre null en el Individual)
-interface Cuenta { grupoId: number; diaId: number; nombre: string | null }
+// fecha: un día anterior que se anota tarde ("2026-11-02"); null es hoy
+interface Cuenta { grupoId: number; diaId: number; nombre: string | null; fecha?: string | null }
 
 function ListaRutina({
   rutina,
   encuentroId,
   cuenta,
+  recuperacion,
   onCambio,
 }: {
   rutina: EjercicioRutina[];
   encuentroId: number | null;
   cuenta?: Cuenta;
+  recuperacion: Recuperacion[];
   onCambio: () => void;
 }) {
   const [orden, setOrden] = useState<number[]>([]);
@@ -312,6 +393,7 @@ function ListaRutina({
             ej={item}
             encuentroId={encuentroId}
             cuenta={cuenta}
+            recuperacion={recuperacion.find(r => r.musculo === item.musculo_principal) ?? null}
             onCambio={onCambio}
             drag={drag}
             activo={isActive}
@@ -327,6 +409,7 @@ function EjercicioCard({
   ej,
   encuentroId,
   cuenta,
+  recuperacion,
   onCambio,
   drag,
   activo,
@@ -335,6 +418,7 @@ function EjercicioCard({
   ej: EjercicioRutina;
   encuentroId: number | null; // null: por mi cuenta
   cuenta?: Cuenta;
+  recuperacion: Recuperacion | null; // null: el músculo está al 100%
   onCambio: () => void;
   drag: () => void;
   activo: boolean;
@@ -381,7 +465,7 @@ function EjercicioCard({
     try {
       const data = await api<{ record: boolean; sumo: boolean }>('serie_guardar', {
         ...(encuentroId !== null && { encuentro_id: encuentroId }),
-        ...(encuentroId === null && cuenta && { grupo_id: cuenta.grupoId, dia_id: cuenta.diaId }),
+        ...(encuentroId === null && cuenta && { grupo_id: cuenta.grupoId, dia_id: cuenta.diaId, ...(cuenta.fecha && { fecha: cuenta.fecha }) }),
         ejercicio_id: actual.ejercicio_id,
         numero: hechas.length + 1,
         repeticiones: r,
@@ -413,6 +497,11 @@ function EjercicioCard({
         <Texto muted>{`En lugar de ${ej.nombre}`}</Texto>
       ) : ej.cambio && <Texto muted>{`En lugar de ${ej.nombre} (lo cambió ${ej.cambio.elegido_por})`}</Texto>}
       <Texto muted>{`${resumenEjercicio(ej)} · ${ej.musculo_principal}`}</Texto>
+      {recuperacion && (
+        <Text style={[styles.recuperacion, { color: colorRecuperacion(recuperacion.porcentaje) }]}>
+          {`${ej.musculo_principal} al ${recuperacion.porcentaje}% de recuperación`}
+        </Text>
+      )}
       {!!siguiente && (
         <Text style={styles.union}>
           {`${ej.union_siguiente === 'superserie' ? '↕ Superserie' : '↻ Circuito'} con ${siguiente}: pasá directo, sin descanso`}
@@ -516,6 +605,7 @@ const styles = StyleSheet.create({
   fechaHistorial: { ...Typography.caption, color: Colors.textSecondary, width: 72 },
   textoHistorial: { ...Typography.body, color: Colors.textPrimary, flex: 1, minWidth: 0 },
   union: { ...Typography.caption, color: Colors.accent, fontWeight: '600', marginBottom: Spacing.xs },
+  recuperacion: { ...Typography.caption, fontWeight: '600', marginBottom: Spacing.xs },
   cabecera: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   descanso: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: Spacing.md,

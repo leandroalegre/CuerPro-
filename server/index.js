@@ -48,6 +48,18 @@ const ZONAS = {
   brazos:      { musculos: ['biceps', 'triceps'], dias: 7 },
   abdominales: { musculos: ['abdominales'], dias: 4 },
 };
+// Horas que tarda un músculo en recuperarse después de entrenarlo (lo grande tarda más).
+// Un músculo que no está en la lista (los que crea un coach) usa RECUPERACION_DEFAULT.
+const RECUPERACION_HORAS = {
+  pecho: 72, espalda: 72, cuadriceps: 72, isquios: 72, gluteos: 72,
+  hombros: 48, biceps: 48, triceps: 48, gemelos: 48, abdominales: 36,
+};
+const RECUPERACION_DEFAULT = 48;
+const SIN_RECUPERACION = ['cardio'];
+const EQUIPOS = ['maquina', 'mancuerna', 'barra', 'polea', 'peso_corporal', 'otro'];
+// Hasta cuántos días atrás se puede anotar un entrenamiento que te olvidaste
+const DIAS_PARA_ATRAS = 14;
+
 const ZONA_DE = Object.fromEntries(
   Object.entries(ZONAS).flatMap(([zona, z]) => z.musculos.map(m => [m, zona]))
 );
@@ -318,9 +330,10 @@ async function codigoLibre() {
 // con al menos 3 series, y no si ese día ya te marcaron la asistencia en ese grupo.
 // Devuelve true la vez que suma.
 const SERIES_PARA_SUMAR = 3;
-async function sumarPorSuCuenta(usuarioId, grupoId) {
+// `fecha` ("2026-11-02"): un día anterior que se anota tarde; sin fecha, hoy.
+async function sumarPorSuCuenta(usuarioId, grupoId, fecha = null) {
   // La fecha de MySQL, la misma que usan las consultas de abajo
-  const [[{ hoy }]] = await pool.query("SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS hoy");
+  const [[{ hoy }]] = fecha ? [[{ hoy: fecha }]] : await pool.query("SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS hoy");
   const ref = `cuenta:${grupoId}:${hoy}`;
   const [[ya]] = await pool.query(
     'SELECT 1 AS si FROM cuerpro_puntos WHERE usuario_id = ? AND motivo = ? AND referencia = ?',
@@ -329,17 +342,17 @@ async function sumarPorSuCuenta(usuarioId, grupoId) {
   if (ya) return false;
   const [[{ series }]] = await pool.query(
     `SELECT COUNT(*) AS series FROM cuerpro_series
-     WHERE usuario_id = ? AND grupo_id = ? AND encuentro_id IS NULL AND created_at >= CURDATE()`,
-    [usuarioId, grupoId]
+     WHERE usuario_id = ? AND grupo_id = ? AND encuentro_id IS NULL AND DATE(created_at) = ?`,
+    [usuarioId, grupoId, hoy]
   );
   if (series < SERIES_PARA_SUMAR) return false;
   const [[fue]] = await pool.query(
     `SELECT 1 AS si FROM cuerpro_confirmaciones c JOIN cuerpro_encuentros e ON e.id = c.encuentro_id
-     WHERE c.usuario_id = ? AND e.grupo_id = ? AND c.asistio = 1 AND DATE(e.fecha_hora) = CURDATE()`,
-    [usuarioId, grupoId]
+     WHERE c.usuario_id = ? AND e.grupo_id = ? AND c.asistio = 1 AND DATE(e.fecha_hora) = ?`,
+    [usuarioId, grupoId, hoy]
   );
   if (fue) return false;
-  await sumarPuntos(usuarioId, grupoId, 'por_su_cuenta', ref);
+  await sumarPuntos(usuarioId, grupoId, 'por_su_cuenta', ref, hoy.slice(0, 7));
   return true;
 }
 
@@ -358,12 +371,12 @@ async function porSuCuentaDelGrupo(grupoId) {
   return filas;
 }
 
-async function sumarPuntos(usuarioId, grupoId, motivo, referencia) {
+async function sumarPuntos(usuarioId, grupoId, motivo, referencia, temporada = temporadaActual()) {
   // INSERT IGNORE + clave única: el mismo evento nunca suma dos veces
   await pool.query(
     `INSERT IGNORE INTO cuerpro_puntos (usuario_id, grupo_id, temporada, motivo, puntos, referencia)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [usuarioId, grupoId, temporadaActual(), motivo, PUNTOS[motivo], referencia]
+    [usuarioId, grupoId, temporada, motivo, PUNTOS[motivo], referencia]
   );
 }
 async function quitarPuntos(usuarioId, motivo, referencia) {
@@ -407,8 +420,19 @@ async function diaDelPlan(grupoId, fechaHora) {
     [grupoId]
   );
   if (!plan) return null;
-  const [dias] = await pool.query('SELECT id FROM cuerpro_plan_dias WHERE plan_id = ? ORDER BY orden', [plan.id]);
+  const [dias] = await pool.query('SELECT id, nombre FROM cuerpro_plan_dias WHERE plan_id = ? ORDER BY orden', [plan.id]);
   if (!dias.length) return null;
+  // El que sigue al del encuentro anterior, así respeta si el coach cambió qué se entrenaba.
+  // Si el plan se editó (versión nueva), se busca el día con el mismo nombre.
+  const [[anterior]] = await pool.query(
+    `SELECT e.dia_id, d.nombre FROM cuerpro_encuentros e JOIN cuerpro_plan_dias d ON d.id = e.dia_id
+     WHERE e.grupo_id = ? AND e.fecha_hora < ? AND e.cancelado = 0
+     ORDER BY e.fecha_hora DESC LIMIT 1`,
+    [grupoId, fechaHora]
+  );
+  let i = anterior ? dias.findIndex(d => d.id === anterior.dia_id) : -1;
+  if (i < 0 && anterior) i = dias.findIndex(d => d.nombre === anterior.nombre);
+  if (i >= 0) return dias[(i + 1) % dias.length].id;
   const [[{ previos }]] = await pool.query(
     'SELECT COUNT(*) AS previos FROM cuerpro_encuentros WHERE grupo_id = ? AND fecha_hora < ? AND cancelado = 0',
     [grupoId, fechaHora]
@@ -506,6 +530,65 @@ function fechaHoraParam(valor) {
   const fecha = `${m[1]} ${pad2(m[2])}:${m[3]}:00`;
   if (new Date(fecha.replace(' ', 'T')) < new Date()) throw httpError(400, 'Esa fecha ya pasó');
   return fecha;
+}
+
+// Fecha local "2026-11-03" (el servidor corre con TZ de Córdoba)
+const fechaLocal = (f = new Date()) => `${f.getFullYear()}-${pad2(f.getMonth() + 1)}-${pad2(f.getDate())}`;
+
+// Día que se anota tarde: "2026-11-02". Hoy o hasta DIAS_PARA_ATRAS días antes.
+// Devuelve null si es hoy (o no vino), así se usa la hora de ahora.
+function fechaPasadaParam(valor) {
+  if (!valor) return null;
+  const m = String(valor).trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) throw httpError(400, 'Fecha inválida, usá AAAA-MM-DD');
+  const fecha = `${m[1]}-${m[2]}-${m[3]}`;
+  const hoy = fechaLocal();
+  if (fecha === hoy) return null;
+  if (fecha > hoy) throw httpError(400, 'No se puede anotar un día que todavía no llegó');
+  const limite = new Date();
+  limite.setDate(limite.getDate() - DIAS_PARA_ATRAS);
+  if (fecha < fechaLocal(limite)) throw httpError(400, `Solo se puede anotar hasta ${DIAS_PARA_ATRAS} días para atrás`);
+  return fecha;
+}
+
+// La última vez que entrenaste cada músculo: con las series y con los días marcados como hechos
+async function ultimaVezPorMusculo(usuarioId) {
+  const [rows] = await pool.query(
+    `SELECT musculo, MAX(cuando) AS ultima_vez, DATEDIFF(NOW(), MAX(cuando)) AS dias,
+            TIMESTAMPDIFF(MINUTE, MAX(cuando), NOW()) AS minutos
+     FROM (
+       SELECT e.musculo_principal AS musculo, s.created_at AS cuando
+       FROM cuerpro_series s JOIN cuerpro_ejercicios e ON e.id = s.ejercicio_id
+       WHERE s.usuario_id = ?
+       UNION ALL
+       SELECT e.musculo_principal, h.fecha_hora
+       FROM cuerpro_dias_hechos h
+       JOIN cuerpro_plan_ejercicios pe ON pe.dia_id = h.dia_id
+       JOIN cuerpro_ejercicios e ON e.id = pe.ejercicio_id
+       WHERE h.usuario_id = ?
+     ) t
+     GROUP BY musculo ORDER BY dias DESC`,
+    [usuarioId, usuarioId]
+  );
+  return rows;
+}
+
+// Cuánto se recuperó cada músculo según las horas desde la última vez (0 a 100).
+// Solo los que todavía no están al 100%.
+function recuperacionDe(musculos) {
+  return musculos
+    .filter(m => !SIN_RECUPERACION.includes(m.musculo))
+    .map(m => {
+      const total = (RECUPERACION_HORAS[m.musculo] ?? RECUPERACION_DEFAULT) * 60;
+      const pasaron = Math.max(Number(m.minutos) || 0, 0);
+      return {
+        musculo: m.musculo,
+        porcentaje: Math.min(100, Math.floor((pasaron / total) * 100)),
+        horas_faltan: Math.max(0, Math.ceil((total - pasaron) / 60)),
+      };
+    })
+    .filter(r => r.porcentaje < 100)
+    .sort((a, b) => a.porcentaje - b.porcentaje);
 }
 
 const fechaLinda = fechaHora => {
@@ -1055,6 +1138,39 @@ const acciones = {
     return { id: r.insertId };
   },
 
+  // Cambiar el nombre, el músculo o el equipo de un ejercicio (si te equivocaste).
+  // Los del grupo los cambia quien puede editar el plan; los del catálogo de CuerPro
+  // (para todos los grupos) solo el superadmin.
+  async ejercicio_editar(req) {
+    const usuario = await sesion(req);
+    const [ejercicioId] = requireParams(req, 'ejercicio_id');
+    const [[ej]] = await pool.query('SELECT * FROM cuerpro_ejercicios WHERE id = ?', [ejercicioId]);
+    if (!ej) throw httpError(404, 'Ejercicio no encontrado');
+    if (ej.grupo_id) {
+      await puedeEditarPlan(ej.grupo_id, usuario.id);
+    } else {
+      const [[u]] = await pool.query('SELECT superadmin FROM cuerpro_usuarios WHERE id = ?', [usuario.id]);
+      if (!u?.superadmin) throw httpError(403, 'Este ejercicio es del catálogo de CuerPro y lo usan todos los grupos: solo lo puede cambiar el administrador');
+    }
+    const nombre = String(getParam(req, 'nombre') ?? ej.nombre).trim().slice(0, 100);
+    const musculo = String(getParam(req, 'musculo_principal') ?? ej.musculo_principal).trim().toLowerCase().slice(0, 40);
+    const equipo = String(getParam(req, 'equipo') ?? ej.equipo);
+    if (!nombre) throw httpError(400, 'Poné el nombre');
+    if (!musculo) throw httpError(400, 'Poné el músculo');
+    if (!EQUIPOS.includes(equipo)) throw httpError(400, 'Equipo inválido');
+    await pool.query(
+      'UPDATE cuerpro_ejercicios SET nombre = ?, musculo_principal = ?, equipo = ? WHERE id = ?',
+      [nombre, musculo, equipo, ej.id]
+    );
+    return { ejercicio: { ...ej, nombre, musculo_principal: musculo, equipo } };
+  },
+
+  // Cuánto se recuperó cada músculo tuyo desde la última vez que lo entrenaste
+  async recuperacion(req) {
+    const usuario = await sesion(req);
+    return { recuperacion: recuperacionDe(await ultimaVezPorMusculo(usuario.id)) };
+  },
+
   // ── Planes ──
   // Sin plan_id devuelve el activo. `planes` lista todos los del grupo.
   async plan(req) {
@@ -1140,6 +1256,32 @@ const acciones = {
     const mia = confirmaciones.find(c => c.usuario_id === usuario.id);
     const objetivo = mia?.va === 0 ? await objetivoDelMes(usuario.id, grupoId, encuentro.fecha_hora) : null;
     return { encuentro: { ...encuentro, dia, rutina, confirmaciones }, objetivo, por_su_cuenta: porSuCuenta };
+  },
+
+  // El coach cambia qué día del plan se entrena en este encuentro (vale para todo el grupo).
+  // Los siguientes siguen la rotación desde este.
+  async encuentro_dia(req) {
+    const usuario = await sesion(req);
+    const [encuentroId, diaId] = requireParams(req, 'encuentro_id', 'dia_id');
+    const [[encuentro]] = await pool.query('SELECT * FROM cuerpro_encuentros WHERE id = ?', [encuentroId]);
+    if (!encuentro) throw httpError(404, 'Encuentro no encontrado');
+    await coach(encuentro.grupo_id, usuario.id);
+    const [[dia]] = await pool.query(
+      `SELECT d.id FROM cuerpro_plan_dias d JOIN cuerpro_planes p ON p.id = d.plan_id
+       WHERE d.id = ? AND p.grupo_id = ? AND p.activo = 1`,
+      [diaId, encuentro.grupo_id]
+    );
+    if (!dia) throw httpError(400, 'Ese día no es del plan activo del grupo');
+    await pool.query('UPDATE cuerpro_encuentros SET dia_id = ? WHERE id = ?', [dia.id, encuentro.id]);
+    // Si ya se habían generado encuentros siguientes, vuelven a la rotación desde este
+    const [siguientes] = await pool.query(
+      'SELECT id, fecha_hora FROM cuerpro_encuentros WHERE grupo_id = ? AND fecha_hora > ? AND cancelado = 0 ORDER BY fecha_hora',
+      [encuentro.grupo_id, encuentro.fecha_hora]
+    );
+    for (const s of siguientes) {
+      await pool.query('UPDATE cuerpro_encuentros SET dia_id = ? WHERE id = ?', [await diaDelPlan(encuentro.grupo_id, s.fecha_hora), s.id]);
+    }
+    return {};
   },
 
   // El coach mueve un encuentro puntual; el horario fijo no cambia
@@ -1307,6 +1449,8 @@ const acciones = {
     // Por tu cuenta se manda el grupo (y el día) del plan que estás haciendo
     let grupoId = Number(getParam(req, 'grupo_id')) || null;
     const diaId = Number(getParam(req, 'dia_id')) || null;
+    // Por tu cuenta se puede anotar un día anterior que te olvidaste
+    const fecha = encuentroId ? null : fechaPasadaParam(getParam(req, 'fecha'));
     if (encuentroId) {
       const [[encuentro]] = await pool.query('SELECT grupo_id FROM cuerpro_encuentros WHERE id = ?', [encuentroId]);
       if (!encuentro) throw httpError(404, 'Encuentro no encontrado');
@@ -1319,19 +1463,48 @@ const acciones = {
       [usuario.id, ejercicioId]
     );
     const [r] = await pool.query(
-      `INSERT INTO cuerpro_series (usuario_id, encuentro_id, grupo_id, dia_id, ejercicio_id, numero, repeticiones, peso)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [usuario.id, encuentroId, grupoId, encuentroId ? null : diaId, ejercicioId, numero, repeticiones, peso]
+      `INSERT INTO cuerpro_series (usuario_id, encuentro_id, grupo_id, dia_id, ejercicio_id, numero, repeticiones, peso, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${fecha ? 'TIMESTAMP(?, CURTIME())' : 'NOW()'})`,
+      [usuario.id, encuentroId, grupoId, encuentroId ? null : diaId, ejercicioId, numero, repeticiones, peso, ...(fecha ? [fecha] : [])]
     );
-    const sumo = !encuentroId && grupoId ? await sumarPorSuCuenta(usuario.id, grupoId) : false;
+    const sumo = !encuentroId && grupoId ? await sumarPorSuCuenta(usuario.id, grupoId, fecha) : false;
 
     // Récord personal: más peso que tu mejor marca (la primera vez no cuenta)
     const record = mejor.veces > 0 && peso > Number(mejor.peso);
     if (record) {
-      const hoy = new Date().toISOString().slice(0, 10);
-      await sumarPuntos(usuario.id, grupoId, 'record', `record:${ejercicioId}:${hoy}`);
+      const dia = fecha ?? fechaLocal();
+      await sumarPuntos(usuario.id, grupoId, 'record', `record:${ejercicioId}:${dia}`, dia.slice(0, 7));
     }
     return { id: r.insertId, record, sumo };
+  },
+
+  // "Ya lo hice": marca un día del plan como hecho (hoy o uno anterior que te olvidaste
+  // de anotar), sin series, así lo que te toca avanza. No suma puntos.
+  // Con borrar=1 lo desmarca.
+  async dia_hecho(req) {
+    const usuario = await sesion(req);
+    const [grupoId] = requireParams(req, 'grupo_id');
+    await miembro(grupoId, usuario.id);
+    const fecha = fechaPasadaParam(getParam(req, 'fecha')) ?? fechaLocal();
+    if (['1', 1, true].includes(getParam(req, 'borrar'))) {
+      await pool.query('DELETE FROM cuerpro_dias_hechos WHERE usuario_id = ? AND grupo_id = ? AND fecha = ?', [usuario.id, grupoId, fecha]);
+      return {};
+    }
+    const [diaId] = requireParams(req, 'dia_id');
+    const [[dia]] = await pool.query(
+      `SELECT d.id FROM cuerpro_plan_dias d JOIN cuerpro_planes p ON p.id = d.plan_id
+       WHERE d.id = ? AND p.grupo_id = ?`,
+      [diaId, grupoId]
+    );
+    if (!dia) throw httpError(400, 'Ese día no es del plan del grupo');
+    // Hoy con la hora de ahora; un día anterior, a las 20 (no se sabe a qué hora fue)
+    const hora = fecha === fechaLocal() ? null : `${fecha} 20:00:00`;
+    await pool.query(
+      `INSERT INTO cuerpro_dias_hechos (usuario_id, grupo_id, dia_id, fecha, fecha_hora) VALUES (?, ?, ?, ?, COALESCE(?, NOW()))
+       ON DUPLICATE KEY UPDATE dia_id = VALUES(dia_id), fecha_hora = VALUES(fecha_hora)`,
+      [usuario.id, grupoId, dia.id, fecha, hora]
+    );
+    return {};
   },
 
   // Tus últimos días entrenados (en cualquier grupo o solo) y qué día del plan activo
@@ -1371,10 +1544,26 @@ const acciones = {
       porFecha.get(s.fecha).ejercicios.add(s.ejercicio_id);
       porFecha.get(s.fecha).musculos.add(s.musculo);
     }
+    // Los días que marcaste como hechos sin anotar series (en este grupo)
+    const [hechos] = await pool.query(
+      `SELECT DATE_FORMAT(h.fecha, '%Y-%m-%d') AS fecha, h.dia_id, e.musculo_principal AS musculo
+       FROM cuerpro_dias_hechos h
+       LEFT JOIN cuerpro_plan_ejercicios pe ON pe.dia_id = h.dia_id
+       LEFT JOIN cuerpro_ejercicios e ON e.id = pe.ejercicio_id
+       WHERE h.usuario_id = ? AND h.grupo_id = ? AND h.fecha >= CURDATE() - INTERVAL 60 DAY`,
+      [usuario.id, grupoId]
+    );
+    for (const h of hechos) {
+      if (!porFecha.has(h.fecha)) porFecha.set(h.fecha, { fecha: h.fecha, ejercicios: new Set(), musculos: new Set(), dia: null });
+      const f = porFecha.get(h.fecha);
+      f.marcado = true;
+      if (dias.has(h.dia_id)) f.dia = dias.get(h.dia_id);
+      if (h.musculo) f.musculos.add(h.musculo);
+    }
 
     // A cada fecha le corresponde el día del plan que más ejercicios comparte
     const ultimaVez = new Map();
-    const entrenamientos = [...porFecha.values()].map(f => {
+    const entrenamientos = [...porFecha.values()].sort((a, b) => b.fecha.localeCompare(a.fecha)).map(f => {
       // Si se anotó con qué día del plan, ese; si no, el que más ejercicios comparte
       let mejor = f.dia;
       let comunes = 0;
@@ -1383,7 +1572,7 @@ const acciones = {
         if (n > comunes) { mejor = d; comunes = n; }
       }
       if (mejor && !ultimaVez.has(mejor.id)) ultimaVez.set(mejor.id, f.fecha);
-      return { fecha: f.fecha, dia_id: mejor?.id ?? null, dia_nombre: mejor?.nombre ?? null, musculos: [...f.musculos] };
+      return { fecha: f.fecha, dia_id: mejor?.id ?? null, dia_nombre: mejor?.nombre ?? null, musculos: [...f.musculos], marcado: !!f.marcado };
     });
 
     // Recomienda el que nunca hiciste o el que hiciste hace más tiempo; empata el orden del plan
@@ -1414,13 +1603,8 @@ const acciones = {
       if (!comparten.length) throw httpError(403, 'Solo podés ver el progreso de tus compañeros de grupo');
     }
 
-    const [musculos] = await pool.query(
-      `SELECT e.musculo_principal AS musculo, MAX(s.created_at) AS ultima_vez,
-              DATEDIFF(NOW(), MAX(s.created_at)) AS dias
-       FROM cuerpro_series s JOIN cuerpro_ejercicios e ON e.id = s.ejercicio_id
-       WHERE s.usuario_id = ? GROUP BY e.musculo_principal ORDER BY dias DESC`,
-      [usuarioId]
-    );
+    const ultimas = await ultimaVezPorMusculo(usuarioId);
+    const musculos = ultimas.map(({ musculo, ultima_vez, dias }) => ({ musculo, ultima_vez, dias: Number(dias) }));
     // Si estás en varios grupos, vale el aviso más corto de cada zona
     const [grupos] = await pool.query(
       `SELECT g.dias_por_zona FROM cuerpro_grupos g
@@ -1456,6 +1640,7 @@ const acciones = {
     return {
       nivel: await nivelDe(usuarioId),
       musculos,
+      recuperacion: recuperacionDe(ultimas),
       avisos,
       records,
       asistencia: { fue: Number(asist.fue || 0), falto: Number(asist.falto || 0) },

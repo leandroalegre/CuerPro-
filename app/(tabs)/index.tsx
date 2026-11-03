@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Boton, Campo, Card, CardDestacada, Etiqueta, Insignia, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
+import { CambiarDiaEncuentro } from '../../components/CambiarDiaEncuentro';
 import { InstalarApp } from '../../components/InstalarApp';
 import { PrimerosPasos } from '../../components/PrimerosPasos';
 import { fraseDelDia } from '../../constants/frases';
@@ -207,6 +208,7 @@ export default function HoyScreen() {
               <Ionicons name="barbell-outline" size={16} color={Colors.accent} />
               <Text style={styles.tocaTexto}>{encuentro.dia ? encuentro.dia.nombre : 'Todavía no hay plan cargado'}</Text>
             </View>
+            {esCoach && encuentro.dia && <CambiarDiaEncuentro encuentroId={encuentro.id} diaId={encuentro.dia.id} onCambio={recargar} />}
 
             <View style={styles.fila}>
               <Boton
@@ -348,6 +350,9 @@ function TeToca({ grupoId }: { grupoId: number }) {
       {!!datos.recomendado && <Texto muted>{datos.recomendado.texto}</Texto>}
       {!!datos.ultimo && <Texto muted>{`Último entrenamiento: ${datos.ultimo}`}</Texto>}
       <Boton titulo="Empezar a entrenar" onPress={() => router.push('/entrenar')} style={{ marginTop: Spacing.md }} />
+      <TouchableOpacity onPress={() => router.push('/entrenar?modo=solo&fecha=ayer')} style={{ marginTop: Spacing.sm }}>
+        <Text style={[styles.chipTexto, { color: Colors.accent }]}>¿Entrenaste otro día y no lo anotaste? Anotalo acá</Text>
+      </TouchableOpacity>
     </CardDestacada>
   );
 }
