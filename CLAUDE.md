@@ -43,6 +43,11 @@ App Expo → https://cuerpro.sistemascloud.ar/api.php
 - Individual: cada usuario tiene un grupo `individual = 1` (nombre "Individual", siempre coach) que se crea al registrarse o en `yo` si falta. No tiene encuentros, código (`grupo_unirse` lo ignora) ni propuestas; Hoy muestra el día que toca y Entrenar va directo a "por mi cuenta". `yo` lo devuelve primero; la app arranca en el primer grupo real. Arriba a la derecha `components/SelectorEspacio.tsx` cambia entre Individual y grupos. `primeros_pasos.grupos` no lo cuenta.
 - Primer ingreso: `app/bienvenida.tsx` (una vez por usuario, elige camino solo o en grupo; solo lo lleva al Individual a armar el plan). Después `components/PrimerosPasos.tsx` en Hoy, con los datos de `primeros_pasos`; se guarda en AsyncStorage `cuerpro_inicio_<usuario>`.
 
+- Editar ejercicios (`ejercicio_editar`: nombre, `musculo_principal`, equipo): los del grupo quien puede editar el plan; los del catálogo base (`grupo_id` NULL, compartidos por todos los grupos) solo el superadmin. En la app: lápiz en el selector de ejercicios y "Cambiar nombre o músculo" en la tarjeta del editor del plan.
+- Recuperación (`recuperacion`, y `progreso.recuperacion`): % por músculo según las horas desde la última vez (`RECUPERACION_HORAS`: grandes 72 h, chicos 48 h, abdominales 36 h, cardio no cuenta). Solo devuelve los que no están al 100%. Se muestra en Plan (barras y por día) y en Entrenar (por día y por ejercicio).
+- Anotar un día que te olvidaste: por tu cuenta, `serie_guardar` acepta `fecha` (AAAA-MM-DD, hasta `DIAS_PARA_ATRAS` = 14 días antes) y los puntos van a ese día. `dia_hecho` marca un día del plan como hecho sin series (tabla `cuerpro_dias_hechos`, uno por usuario, grupo y fecha; `borrar=1` lo desmarca; no suma puntos). Cuenta para `mis_entrenamientos` (lo que te toca), la recuperación y el aviso de músculo sin entrenar.
+- Con el grupo, el coach cambia qué día del plan se hace en un encuentro (`encuentro_dia`); `diaDelPlan` sigue la rotación desde el día del encuentro anterior (si el plan se editó, por nombre), y los encuentros siguientes ya generados se recalculan.
+
 ## Pruebas
 - `cd server && CUERPRO_TEST_DB=1 DB_NAME=... npm test`: flujo completo contra MySQL (borra las tablas `cuerpro_*`).
 - `npx tsc --noEmit` en la raíz para la app.

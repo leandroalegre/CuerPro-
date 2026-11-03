@@ -5,15 +5,21 @@
  * - El coach (o todos, si el grupo es abierto) lo arma y lo edita; los ejercicios
  *   son tarjetas que se arrastran para cambiar el orden
  * - Los miembros proponen cambios y el coach los acepta o rechaza
+ * - Se le puede cambiar el nombre, el músculo o el equipo a un ejercicio (lápiz en el catálogo
+ *   o "Cambiar nombre o músculo" en la tarjeta): los del grupo quien edita el plan, los de CuerPro el superadmin
+ * - Muestra cuánto se recuperó cada músculo tuyo y lo avisa en cada día del plan
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Modal, Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { NestableDraggableFlatList, NestableScrollContainer, RenderItemParams, ScaleDecorator } from 'react-native-draggable-flatlist';
-import { EjercicioNuevo, SelectorEjercicio } from '../../components/SelectorEjercicio';
+import { AvisoRecuperacion, BarrasRecuperacion } from '../../components/Recuperacion';
+import { EjercicioNuevo, FormEjercicio, SelectorEjercicio } from '../../components/SelectorEjercicio';
 import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
+import { useRecuperacion } from '../../hooks/useRecuperacion';
 import { useSesion } from '../../hooks/useSesion';
 import { api, Carga, CARGAS, Ejercicio, EQUIPO, Plan, Propuesta, resumenEjercicio, textoPausa, PlanResumen, Union, UNIONES, diasParaVencer, textoVence } from '../../lib/api';
 
@@ -48,7 +54,9 @@ const MANIJA = { left: 0, width: 64 };
 const nuevaKey = () => `k${++contador}`;
 
 export default function PlanScreen() {
-  const { token, grupo } = useSesion();
+  const { token, grupo, usuario } = useSesion();
+  const recuperacion = useRecuperacion();
+  const [corrigiendo, setCorrigiendo] = useState<Ejercicio | null>(null); // ejercicio al que se le cambia nombre o músculo
   const [plan, setPlan] = useState<Plan | null>(null);
   const [planes, setPlanes] = useState<PlanResumen[]>([]);
   const [verId, setVerId] = useState<number | null>(null); // plan que se está mirando (null: el activo)
@@ -167,6 +175,24 @@ export default function PlanScreen() {
     setCatalogo(c => [...c, nuevo]);
     return nuevo;
   };
+
+  // Los del grupo los corrige quien edita el plan; los del catálogo de CuerPro, el superadmin
+  const puedeEditarEj = (e: Ejercicio) => (e.grupo_id === grupo!.id && esCoach) || !!usuario?.superadmin;
+
+  // Corrige nombre, músculo o equipo: cambia en el catálogo y en todos los planes del grupo
+  const editarEjercicio = async (e: Ejercicio, datos: EjercicioNuevo): Promise<Ejercicio> => {
+    const r = await api<{ ejercicio: Ejercicio }>('ejercicio_editar', { ejercicio_id: e.id, ...datos }, token);
+    const nuevo = { ...e, ...r.ejercicio };
+    const cambiar = (x: Ejercicio) => (x.id === e.id ? nuevo : x);
+    setCatalogo(c => c.map(cambiar));
+    setDias(ds => ds.map(d => ({
+      ...d,
+      ejercicios: d.ejercicios.map(x => ({ ...x, ejercicio: cambiar(x.ejercicio), alternativas: x.alternativas.map(cambiar) })),
+    })));
+    return nuevo;
+  };
+
+  const musculosCatalogo = Array.from(new Set(catalogo.map(e => e.musculo_principal))).sort();
 
   const alElegir = (e: Ejercicio) => {
     if (!selector) return;
@@ -289,6 +315,7 @@ export default function PlanScreen() {
         </View>
         <Texto muted>{vence ? `${textoVence(vence)}. Te avisamos una semana antes para armar el próximo.` : 'El plan no vence.'}</Texto>
         <Texto muted>Arrastrá cada ejercicio desde ≡ para cambiar el orden. Tocalo para editarlo.</Texto>
+        <BarrasRecuperacion lista={recuperacion.lista} />
 
         {dias.map((d, i) => (
           <Card key={d.key}>
@@ -310,6 +337,7 @@ export default function PlanScreen() {
                 </TouchableOpacity>
               )}
             </View>
+            <AvisoRecuperacion lista={recuperacion.deEjercicios(d.ejercicios.map(e => e.ejercicio))} />
 
             <NestableDraggableFlatList
               data={d.ejercicios}
@@ -330,10 +358,10 @@ export default function PlanScreen() {
                         <TouchableOpacity style={{ flex: 1, minWidth: 0 }} onPress={() => setAbierto(abiertoEste ? null : e.key)}>
                           <Text style={styles.ejNombre}>{e.ejercicio.nombre}</Text>
                           <Text style={styles.mini}>
-                            {resumenEjercicio({
+                            {`${resumenEjercicio({
                               series: Number(e.series) || 0, repeticiones: e.repeticiones,
                               peso_sugerido: e.peso || null, carga: e.carga, descanso_seg: e.descanso,
-                            })}
+                            })} · ${e.ejercicio.musculo_principal}`}
                           </Text>
                         </TouchableOpacity>
                         <TouchableOpacity onPress={() => setAbierto(abiertoEste ? null : e.key)} accessibilityLabel={abiertoEste ? 'Cerrar' : 'Editar'}>
@@ -413,6 +441,11 @@ export default function PlanScreen() {
                               </View>
                             </>
                           )}
+                          {puedeEditarEj(e.ejercicio) && (
+                            <TouchableOpacity onPress={() => setCorrigiendo(e.ejercicio)} style={{ marginTop: Spacing.sm, alignSelf: 'flex-start' }}>
+                              <Text style={[styles.altTexto, { color: Colors.accent }]}>Cambiar nombre o músculo</Text>
+                            </TouchableOpacity>
+                          )}
                           <TouchableOpacity onPress={() => quitarEj(i, k)} style={{ marginTop: Spacing.sm, alignSelf: 'flex-start' }}>
                             <Text style={[styles.altTexto, { color: Colors.error }]}>Quitar del plan</Text>
                           </TouchableOpacity>
@@ -448,7 +481,27 @@ export default function PlanScreen() {
           onElegir={alElegir}
           onCerrar={() => setSelector(null)}
           onCrear={crearEjercicio}
+          onEditar={editarEjercicio}
+          puedeEditar={puedeEditarEj}
         />
+
+        <Modal visible={!!corrigiendo} animationType="slide" onRequestClose={() => setCorrigiendo(null)}>
+          <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }}>
+            <ScrollView contentContainerStyle={{ padding: Spacing.md }} keyboardShouldPersistTaps="handled">
+              {corrigiendo && (
+                <FormEjercicio
+                  titulo="Editar ejercicio"
+                  inicial={{ nombre: corrigiendo.nombre, musculo_principal: corrigiendo.musculo_principal, equipo: corrigiendo.equipo }}
+                  musculos={musculosCatalogo}
+                  boton="Guardar cambios"
+                  nota={corrigiendo.grupo_id ? 'El cambio vale en todos los planes del grupo.' : 'Es del catálogo de CuerPro: el cambio vale para todos los grupos.'}
+                  onGuardar={async datos => { await editarEjercicio(corrigiendo, datos); setCorrigiendo(null); }}
+                  onCancelar={() => setCorrigiendo(null)}
+                />
+              )}
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
       </NestableScrollContainer>
     );
   }
@@ -533,6 +586,8 @@ export default function PlanScreen() {
             )}
           </View>
 
+          <BarrasRecuperacion lista={recuperacion.lista} />
+
           {plan.dias.map(d => (
             <Card key={d.id}>
               <View style={styles.cabeceraDia}>
@@ -542,11 +597,12 @@ export default function PlanScreen() {
                   <Text style={styles.mini}>{cuantos(d.ejercicios.length, 'ejercicio', 'ejercicios')}</Text>
                 </View>
               </View>
+              <AvisoRecuperacion lista={recuperacion.deEjercicios(d.ejercicios)} />
               {d.ejercicios.map((e, k) => (
                 <View key={e.plan_ejercicio_id} style={[styles.ejVista, k > 0 && d.ejercicios[k - 1].union_siguiente && styles.ejUnido]}>
                   {k > 0 && !!d.ejercicios[k - 1].union_siguiente && <MarcaUnion tipo={d.ejercicios[k - 1].union_siguiente!} />}
                   <Text style={styles.ejNombre}>{e.nombre}</Text>
-                  <Text style={styles.mini}>{`${resumenEjercicio(e)} · ${EQUIPO[e.equipo] ?? e.equipo}`}</Text>
+                  <Text style={styles.mini}>{`${resumenEjercicio(e)} · ${EQUIPO[e.equipo] ?? e.equipo} · ${e.musculo_principal}`}</Text>
                   {!!e.nota && <Text style={styles.nota}>{e.nota}</Text>}
                   {e.alternativas.length > 0 && (
                     <Text style={styles.mini}>{`Si está ocupada: ${e.alternativas.map(a => a.nombre).join(', ')}`}</Text>

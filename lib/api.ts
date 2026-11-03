@@ -142,3 +142,20 @@ export function textoVence(vence: string) {
   return `Vence el ${Number(d)}/${Number(m)} (${dias === 1 ? 'falta 1 día' : `faltan ${dias} días`})`;
 }
 export interface Propuesta { id: number; texto: string; estado: 'pendiente' | 'aceptada' | 'rechazada'; created_at: string; autor: string }
+
+// Cuánto se recuperó un músculo desde la última vez que lo entrenaste (solo vienen los que no están al 100%)
+export interface Recuperacion { musculo: string; porcentaje: number; horas_faltan: number }
+
+// "Pecho al 60% de recuperación"
+export const musculoLindo = (m: string) => m.charAt(0).toUpperCase() + m.slice(1);
+export function textoRecuperacion(r: Recuperacion) {
+  const faltan = r.horas_faltan >= 24 ? `${Math.round(r.horas_faltan / 24)} ${Math.round(r.horas_faltan / 24) === 1 ? 'día' : 'días'}` : `${r.horas_faltan} h`;
+  return `${musculoLindo(r.musculo)} al ${r.porcentaje}% de recuperación (100% en ${faltan})`;
+}
+
+// Fecha local "2026-11-03" de hace n días
+export function fechaHaceDias(n: number) {
+  const f = new Date();
+  f.setDate(f.getDate() - n);
+  return `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}-${String(f.getDate()).padStart(2, '0')}`;
+}

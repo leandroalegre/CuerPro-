@@ -482,3 +482,86 @@ test('borrar la cuenta', { skip: !enabled && 'Definí CUERPRO_TEST_DB=1 y DB_NAM
   const gr = (await api('yo', {}, leo.token)).grupos.find(x => x.id === g.grupo.id);
   assert.equal(gr.rol, 'coach');
 });
+
+test('editar ejercicios, recuperación y anotar un día que te olvidaste', { skip: !enabled && 'Definí CUERPRO_TEST_DB=1 y DB_NAME' }, async () => {
+  const profe = await api('registro', { nombre: 'Profe2', email: 'profe2@test.ar', password: 'secreto1' });
+  const tomi = await api('registro', { nombre: 'Tomi', email: 'olvido@test.ar', password: 'secreto1' });
+  const g = await api('grupo_crear', { nombre: 'Los Olvidadizos' }, profe.token);
+  await api('grupo_unirse', { codigo: g.grupo.codigo_invitacion }, tomi.token);
+  const gid = g.grupo.id;
+
+  // Un ejercicio del grupo cargado en el músculo equivocado: el coach lo arregla
+  const ej = await api('ejercicio_crear', { grupo_id: gid, nombre: 'Aperturas mal', musculo_principal: 'hombros', equipo: 'maquina' }, profe.token);
+  const ed = await api('ejercicio_editar', { ejercicio_id: ej.id, nombre: 'Aperturas en máquina', musculo_principal: 'Pecho' }, profe.token);
+  assert.equal(ed.ok, true, ed.error);
+  assert.equal(ed.ejercicio.musculo_principal, 'pecho');
+  const [[fila]] = await pool.query('SELECT nombre, musculo_principal, equipo FROM cuerpro_ejercicios WHERE id = ?', [ej.id]);
+  assert.deepEqual({ ...fila }, { nombre: 'Aperturas en máquina', musculo_principal: 'pecho', equipo: 'maquina' });
+  // Un miembro (grupo con solo coaches editando) no puede, y nadie salvo el superadmin cambia el catálogo base
+  assert.equal((await api('ejercicio_editar', { ejercicio_id: ej.id, nombre: 'X' }, tomi.token)).ok, false);
+  const [[base]] = await pool.query('SELECT id FROM cuerpro_ejercicios WHERE grupo_id IS NULL LIMIT 1');
+  assert.equal((await api('ejercicio_editar', { ejercicio_id: base.id, nombre: 'X' }, profe.token)).ok, false);
+  assert.equal((await api('ejercicio_editar', { ejercicio_id: ej.id, nombre: '' }, profe.token)).ok, false);
+  assert.equal((await api('ejercicio_editar', { ejercicio_id: ej.id, equipo: 'cohete' }, profe.token)).ok, false);
+
+  // Plan de dos días
+  const plan = { nombre: 'Plan', dias: [
+    { nombre: 'Pecho', ejercicios: [{ ejercicio_id: ej.id, series: 3, repeticiones: '10' }] },
+    { nombre: 'Piernas', ejercicios: [{ ejercicio_id: base.id, series: 3, repeticiones: '10' }] },
+  ] };
+  const pg = await api('plan_guardar', { grupo_id: gid, plan, activar: 1 }, profe.token);
+  assert.equal(pg.ok, true, pg.error);
+  const pr = await api('plan', { grupo_id: gid }, tomi.token);
+  assert.equal(pr.ok, true, pr.error);
+  const dias = pr.plan.dias;
+
+  // Sin entrenar, todo recuperado
+  assert.deepEqual((await api('recuperacion', {}, tomi.token)).recuperacion, []);
+
+  // Ayer hizo Pecho y no lo anotó: lo marca y le toca Piernas
+  const ayer = new Date(); ayer.setDate(ayer.getDate() - 1);
+  const pad = n => String(n).padStart(2, '0');
+  const fAyer = `${ayer.getFullYear()}-${pad(ayer.getMonth() + 1)}-${pad(ayer.getDate())}`;
+  assert.equal((await api('mis_entrenamientos', { grupo_id: gid }, tomi.token)).recomendado.nombre, 'Pecho');
+  const hecho = await api('dia_hecho', { grupo_id: gid, dia_id: dias[0].id, fecha: fAyer }, tomi.token);
+  assert.equal(hecho.ok, true, hecho.error);
+  let mis = await api('mis_entrenamientos', { grupo_id: gid }, tomi.token);
+  assert.equal(mis.recomendado.nombre, 'Piernas');
+  assert.deepEqual([mis.entrenamientos[0].fecha, mis.entrenamientos[0].dia_nombre, mis.entrenamientos[0].marcado], [fAyer, 'Pecho', true]);
+  // Pecho quedó a medio recuperar (ayer a las 20, 72 horas en total)
+  const rec = (await api('recuperacion', {}, tomi.token)).recuperacion;
+  assert.equal(rec.length, 1);
+  assert.equal(rec[0].musculo, 'pecho');
+  assert.ok(rec[0].porcentaje > 0 && rec[0].porcentaje < 60, String(rec[0].porcentaje));
+  assert.ok((await api('progreso', {}, tomi.token)).recuperacion.some(r => r.musculo === 'pecho'));
+  // Fechas inválidas
+  assert.equal((await api('dia_hecho', { grupo_id: gid, dia_id: dias[0].id, fecha: '2099-01-01' }, tomi.token)).ok, false);
+  assert.equal((await api('dia_hecho', { grupo_id: gid, dia_id: dias[0].id, fecha: '2020-01-01' }, tomi.token)).ok, false);
+  // Desmarcarlo
+  assert.equal((await api('dia_hecho', { grupo_id: gid, fecha: fAyer, borrar: 1 }, tomi.token)).ok, true);
+  assert.equal((await api('mis_entrenamientos', { grupo_id: gid }, tomi.token)).recomendado.nombre, 'Pecho');
+
+  // O lo anota con las series en la fecha de ayer: suma los puntos en ese día
+  const serie = n => api('serie_guardar', { grupo_id: gid, dia_id: dias[0].id, ejercicio_id: ej.id, numero: n, repeticiones: 10, peso: 30, fecha: fAyer }, tomi.token);
+  assert.deepEqual([(await serie(1)).sumo, (await serie(2)).sumo, (await serie(3)).sumo], [false, false, true]);
+  const [[s]] = await pool.query("SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS f FROM cuerpro_series WHERE usuario_id = ? LIMIT 1", [tomi.usuario.id]);
+  assert.equal(s.f, fAyer);
+  const [[p]] = await pool.query("SELECT referencia FROM cuerpro_puntos WHERE usuario_id = ? AND motivo = 'por_su_cuenta'", [tomi.usuario.id]);
+  assert.equal(p.referencia, `cuenta:${gid}:${fAyer}`);
+  mis = await api('mis_entrenamientos', { grupo_id: gid }, tomi.token);
+  assert.equal(mis.recomendado.nombre, 'Piernas');
+
+  // Con el grupo: el coach cambia qué se entrena en el encuentro y el siguiente sigue desde ahí
+  await api('horarios_guardar', { grupo_id: gid, horarios: [0, 1, 2, 3, 4, 5, 6].map(d => ({ dia_semana: d, hora: '23:59' })) }, profe.token);
+  const enc = (await api('encuentro_proximo', { grupo_id: gid }, tomi.token)).encuentro;
+  const otroDia = dias.find(d => d.id !== enc.dia.id);
+  assert.equal((await api('encuentro_dia', { encuentro_id: enc.id, dia_id: otroDia.id }, tomi.token)).ok, false);
+  const cambio = await api('encuentro_dia', { encuentro_id: enc.id, dia_id: otroDia.id }, profe.token);
+  assert.equal(cambio.ok, true, cambio.error);
+  assert.equal((await api('encuentro_proximo', { grupo_id: gid }, tomi.token)).encuentro.dia.nombre, otroDia.nombre);
+  // El que sigue (generado después) vuelve a la rotación desde el cambiado
+  await pool.query('UPDATE cuerpro_encuentros SET fecha_hora = fecha_hora - INTERVAL 3 DAY WHERE id = ?', [enc.id]);
+  const sig = (await api('encuentro_proximo', { grupo_id: gid }, tomi.token)).encuentro;
+  assert.notEqual(sig.id, enc.id);
+  assert.equal(sig.dia.id, dias.find(d => d.id !== otroDia.id).id);
+});
