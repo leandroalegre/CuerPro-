@@ -4,7 +4,7 @@ import { FlatList, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 
 import { Text } from './Letra';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Radius, Spacing, Typography } from '../constants/theme';
-import { Ejercicio, EQUIPO } from '../lib/api';
+import { Ejercicio, EQUIPO, ZONAS_MUSCULO, zonaDe } from '../lib/api';
 import { Boton, Campo } from './ui';
 
 export interface EjercicioNuevo { nombre: string; musculo_principal: string; equipo: string }
@@ -37,7 +37,7 @@ export function SelectorEjercicio({
   puedeEditar?: (e: Ejercicio) => boolean;
 }) {
   const [busqueda, setBusqueda] = useState('');
-  const [musculo, setMusculo] = useState<string | null>(null);
+  const [zona, setZona] = useState<string | null>(null); // filtro: piernas, brazos… u 'otros'
   const [nuevo, setNuevo] = useState<EjercicioNuevo | null>(null);
   const [editando, setEditando] = useState<Ejercicio | null>(null);
 
@@ -45,7 +45,7 @@ export function SelectorEjercicio({
   useEffect(() => {
     if (!visible) return;
     setBusqueda('');
-    setMusculo(sugerir?.musculo_principal ?? null);
+    setZona(sugerir ? zonaDe(sugerir.musculo_principal)?.zona ?? 'otros' : null);
     setNuevo(null);
     setEditando(null);
   }, [visible, sugerir]);
@@ -55,21 +55,23 @@ export function SelectorEjercicio({
     [ejercicios],
   );
 
+  const hayOtros = musculos.some(m => !zonaDe(m));
+
   const lista = useMemo(() => {
     const texto = busqueda.trim().toLowerCase();
     const filtrados = ejercicios.filter(e =>
       !excluir.includes(e.id) &&
-      (!musculo || e.musculo_principal === musculo) &&
+      (!zona || (zonaDe(e.musculo_principal)?.zona ?? 'otros') === zona) &&
       (!texto || e.nombre.toLowerCase().includes(texto)),
     );
     if (!sugerir) return filtrados;
     const puntaje = (e: Ejercicio) =>
       (e.musculo_principal === sugerir.musculo_principal ? 2 : 0) + (e.movimiento && e.movimiento === sugerir.movimiento ? 1 : 0);
     return [...filtrados].sort((a, b) => puntaje(b) - puntaje(a));
-  }, [ejercicios, excluir, musculo, busqueda, sugerir]);
+  }, [ejercicios, excluir, zona, busqueda, sugerir]);
 
   const abrirNuevo = () =>
-    setNuevo({ nombre: busqueda.trim(), musculo_principal: musculo ?? '', equipo: 'maquina' });
+    setNuevo({ nombre: busqueda.trim(), musculo_principal: zona && zona !== 'otros' ? zona : '', equipo: 'maquina' });
 
   const crear = async (datos: EjercicioNuevo) => {
     if (!onCrear) return;
@@ -104,18 +106,23 @@ export function SelectorEjercicio({
             <Ionicons name="close" size={28} color={Colors.textPrimary} />
           </TouchableOpacity>
         </View>
-        {!editando && (
+        {!editando && !formulario && (
         <View style={{ paddingHorizontal: Spacing.md }}>
           <Campo placeholder="Buscar ejercicio" value={busqueda} onChangeText={setBusqueda} />
           <View style={styles.chips}>
-            <Chip texto="Todos" activo={!musculo} onPress={() => setMusculo(null)} />
-            {musculos.map(m => (
-              <Chip key={m} texto={m} activo={musculo === m} onPress={() => setMusculo(m)} />
+            <Chip texto="Todos" activo={!zona} onPress={() => setZona(null)} />
+            {ZONAS_MUSCULO.map(z => (
+              <Chip key={z.zona} texto={z.nombre} activo={zona === z.zona} onPress={() => setZona(z.zona)} />
             ))}
+            {hayOtros && <Chip texto="Otros" activo={zona === 'otros'} onPress={() => setZona('otros')} />}
           </View>
         </View>
         )}
-        {editando ? (
+        {formulario && !editando ? (
+          <ScrollView contentContainerStyle={{ padding: Spacing.md }} keyboardShouldPersistTaps="handled">
+            {formulario}
+          </ScrollView>
+        ) : editando ? (
           <ScrollView contentContainerStyle={{ padding: Spacing.md }} keyboardShouldPersistTaps="handled">
             <FormEjercicio
               titulo="Editar ejercicio"
@@ -146,7 +153,7 @@ export function SelectorEjercicio({
             </View>
           )}
           ListEmptyComponent={<Text style={styles.detalle}>No hay ejercicios con ese filtro.</Text>}
-          ListFooterComponent={pie || null}
+          ListHeaderComponent={pie || null}
           keyboardShouldPersistTaps="handled"
         />
         )}
@@ -176,8 +183,22 @@ export function FormEjercicio({
   const [datos, setDatos] = useState(inicial);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
-  // Si el músculo no está en la lista (uno nuevo), igual se muestra para poder elegirlo
-  const opciones = musculos.includes(inicial.musculo_principal) || !inicial.musculo_principal ? musculos : [...musculos, inicial.musculo_principal];
+  // Primero la zona (Piernas, Brazos…) y después, si tiene varios, cuál músculo.
+  // "Otro" deja escribir uno propio (ej: lumbares, cuello).
+  const zonaInicial = inicial.musculo_principal ? zonaDe(inicial.musculo_principal)?.zona ?? 'otro' : null;
+  const [zona, setZona] = useState<string | null>(zonaInicial);
+  const zonaElegida = ZONAS_MUSCULO.find(z => z.zona === zona);
+  // Músculos propios del grupo que no están en ninguna zona, para elegirlos rápido en "Otro"
+  const propios = musculos.filter(m => !zonaDe(m));
+  const setMusculo = (m: string) => setDatos({ ...datos, musculo_principal: m });
+
+  const elegirZona = (z: string) => {
+    setZona(z);
+    const encontrada = ZONAS_MUSCULO.find(x => x.zona === z);
+    // Zona de un solo músculo (pecho, hombros…): queda elegido; con varios, arranca en "en general"
+    if (encontrada) setMusculo(encontrada.musculos.length === 1 ? encontrada.musculos[0] : encontrada.zona);
+    else setMusculo(zonaDe(datos.musculo_principal) ? '' : datos.musculo_principal);
+  };
 
   const guardar = async () => {
     if (!datos.nombre.trim() || !datos.musculo_principal.trim()) {
@@ -187,7 +208,7 @@ export function FormEjercicio({
     setGuardando(true);
     setError('');
     try {
-      await onGuardar({ ...datos, nombre: datos.nombre.trim(), musculo_principal: datos.musculo_principal.trim() });
+      await onGuardar({ ...datos, nombre: datos.nombre.trim(), musculo_principal: datos.musculo_principal.trim().toLowerCase() });
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -201,10 +222,34 @@ export function FormEjercicio({
       <Campo placeholder="Nombre" value={datos.nombre} onChangeText={nombre => setDatos({ ...datos, nombre })} />
       <Text style={styles.detalle}>Músculo principal</Text>
       <View style={styles.chips}>
-        {opciones.map(m => (
-          <Chip key={m} texto={m} activo={datos.musculo_principal === m} onPress={() => setDatos({ ...datos, musculo_principal: m })} />
+        {ZONAS_MUSCULO.map(z => (
+          <Chip key={z.zona} texto={z.nombre} activo={zona === z.zona} onPress={() => elegirZona(z.zona)} />
         ))}
+        <Chip texto="Otro" activo={zona === 'otro'} onPress={() => elegirZona('otro')} />
       </View>
+      {zonaElegida && zonaElegida.musculos.length > 1 && (
+        <>
+          <Text style={styles.detalle}>¿Cuál?</Text>
+          <View style={styles.chips}>
+            <Chip texto={`${zonaElegida.nombre} en general`} activo={datos.musculo_principal === zonaElegida.zona} onPress={() => setMusculo(zonaElegida.zona)} />
+            {zonaElegida.musculos.map(m => (
+              <Chip key={m} texto={m} activo={datos.musculo_principal === m} onPress={() => setMusculo(m)} />
+            ))}
+          </View>
+        </>
+      )}
+      {zona === 'otro' && (
+        <>
+          {propios.length > 0 && (
+            <View style={styles.chips}>
+              {propios.map(m => (
+                <Chip key={m} texto={m} activo={datos.musculo_principal === m} onPress={() => setMusculo(m)} />
+              ))}
+            </View>
+          )}
+          <Campo placeholder="¿Qué músculo? (ej: cuello)" value={datos.musculo_principal} onChangeText={setMusculo} maxLength={40} autoCapitalize="none" />
+        </>
+      )}
       <Text style={styles.detalle}>Equipo</Text>
       <View style={styles.chips}>
         {Object.entries(EQUIPO).map(([valor, texto]) => (

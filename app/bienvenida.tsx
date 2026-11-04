@@ -15,6 +15,7 @@ import { Boton } from '../components/ui';
 import { ESLOGAN } from '../constants/app';
 import { Colors, Radius, Spacing, Typography } from '../constants/theme';
 import { useSesion } from '../hooks/useSesion';
+import { primerNombre } from '../lib/api';
 
 const PASOS: Record<Camino, { icono: keyof typeof Ionicons.glyphMap; texto: string }[]> = {
   grupo: [
@@ -62,7 +63,7 @@ export default function BienvenidaScreen() {
         {paso === 0 && (
           <>
             <Image source={require('../assets/images/logo.png')} style={styles.logo} resizeMode="contain" accessibilityLabel="CuerPro" />
-            <Text style={styles.titulo}>{`¡Hola${usuario ? `, ${usuario.nombre.split(' ')[0]}` : ''}!`}</Text>
+            <Text style={styles.titulo}>{`¡Hola${usuario ? `, ${primerNombre(usuario.nombre)}` : ''}!`}</Text>
             <Text style={styles.texto}>
               CuerPro te dice qué toca entrenar hoy, quién va al gym y cuánto vas mejorando. {ESLOGAN}
             </Text>

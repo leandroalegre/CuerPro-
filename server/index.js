@@ -41,18 +41,19 @@ const UNIONES = ['superserie', 'circuito'];
 // Zonas para el aviso de músculo sin entrenar, con los días por defecto.
 // El cardio no avisa: suele ser entrada en calor.
 const ZONAS = {
-  piernas:     { musculos: ['cuadriceps', 'isquios', 'gluteos', 'gemelos'], dias: 7 },
-  espalda:     { musculos: ['espalda'], dias: 7 },
+  // El nombre de la zona también es un músculo válido ("piernas" en general)
+  piernas:     { musculos: ['piernas', 'cuadriceps', 'isquios', 'gluteos', 'gemelos', 'aductores'], dias: 7 },
+  espalda:     { musculos: ['espalda', 'lumbares'], dias: 7 },
   pecho:       { musculos: ['pecho'], dias: 7 },
   hombros:     { musculos: ['hombros'], dias: 7 },
-  brazos:      { musculos: ['biceps', 'triceps'], dias: 7 },
+  brazos:      { musculos: ['brazos', 'biceps', 'triceps', 'antebrazos'], dias: 7 },
   abdominales: { musculos: ['abdominales'], dias: 4 },
 };
 // Horas que tarda un músculo en recuperarse después de entrenarlo (lo grande tarda más).
 // Un músculo que no está en la lista (los que crea un coach) usa RECUPERACION_DEFAULT.
 const RECUPERACION_HORAS = {
-  pecho: 72, espalda: 72, cuadriceps: 72, isquios: 72, gluteos: 72,
-  hombros: 48, biceps: 48, triceps: 48, gemelos: 48, abdominales: 36,
+  pecho: 72, espalda: 72, cuadriceps: 72, isquios: 72, gluteos: 72, piernas: 72, lumbares: 72,
+  hombros: 48, biceps: 48, triceps: 48, gemelos: 48, aductores: 48, brazos: 48, antebrazos: 48, abdominales: 36,
 };
 const RECUPERACION_DEFAULT = 48;
 const SIN_RECUPERACION = ['cardio'];
@@ -942,7 +943,52 @@ const acciones = {
               (SELECT DATE_FORMAT(p.vence, '%Y-%m-%d') FROM cuerpro_planes p WHERE p.grupo_id = g.id AND p.activo = 1 LIMIT 1) AS vence
        FROM cuerpro_grupos g ORDER BY g.individual, g.nombre`
     );
-    return { usuarios, grupos };
+    // Quién está en qué grupo (sin los Individual), para sumar o quitar desde Administrar
+    const [membresias] = await pool.query(
+      `SELECT m.usuario_id, m.grupo_id, m.rol FROM cuerpro_miembros m
+       JOIN cuerpro_grupos g ON g.id = m.grupo_id WHERE g.individual = 0`
+    );
+    return { usuarios, grupos, membresias };
+  },
+
+  // El superadmin suma a un usuario a un grupo (como si hubiera entrado con el código) y le avisa
+  async admin_miembro_agregar(req) {
+    await superadmin(req);
+    const [usuarioId, grupoId] = requireParams(req, 'usuario_id', 'grupo_id').map(Number);
+    const rol = getParam(req, 'rol') === 'coach' ? 'coach' : 'miembro';
+    const [[grupo]] = await pool.query('SELECT id, nombre, individual, quien_edita FROM cuerpro_grupos WHERE id = ?', [grupoId]);
+    if (!grupo) throw httpError(404, 'No existe ese grupo');
+    if (grupo.individual) throw httpError(400, 'El Individual es solo de su dueño');
+    const [[u]] = await pool.query('SELECT id, nombre FROM cuerpro_usuarios WHERE id = ?', [usuarioId]);
+    if (!u) throw httpError(404, 'No existe ese usuario');
+    const [r] = await pool.query(
+      'INSERT IGNORE INTO cuerpro_miembros (grupo_id, usuario_id, rol) VALUES (?, ?, ?)',
+      [grupoId, usuarioId, grupo.quien_edita === 'todos' ? 'coach' : rol]
+    );
+    if (!r.affectedRows) throw httpError(400, `${u.nombre} ya está en ${grupo.nombre}`);
+    notificar([usuarioId], { title: `Te sumaron a ${grupo.nombre}`, body: 'Ya podés ver el plan y los entrenamientos del grupo.', data: { tipo: 'grupo', grupo_id: grupoId } });
+    return {};
+  },
+
+  // Saca a un usuario de un grupo. Si era el único coach, pasa a serlo el miembro más antiguo.
+  async admin_miembro_quitar(req) {
+    await superadmin(req);
+    const [usuarioId, grupoId] = requireParams(req, 'usuario_id', 'grupo_id').map(Number);
+    const [[grupo]] = await pool.query('SELECT individual FROM cuerpro_grupos WHERE id = ?', [grupoId]);
+    if (!grupo) throw httpError(404, 'No existe ese grupo');
+    if (grupo.individual) throw httpError(400, 'El Individual no se puede quitar');
+    const [miembros] = await pool.query(
+      'SELECT usuario_id, rol FROM cuerpro_miembros WHERE grupo_id = ? ORDER BY created_at, usuario_id', [grupoId]
+    );
+    const este = miembros.find(m => m.usuario_id === usuarioId);
+    if (!este) throw httpError(400, 'No está en ese grupo');
+    const resto = miembros.filter(m => m.usuario_id !== usuarioId);
+    if (!resto.length) throw httpError(400, 'Es el único del grupo: no se puede dejar el grupo vacío');
+    await pool.query('DELETE FROM cuerpro_miembros WHERE grupo_id = ? AND usuario_id = ?', [grupoId, usuarioId]);
+    if (este.rol === 'coach' && !resto.some(m => m.rol === 'coach')) {
+      await pool.query("UPDATE cuerpro_miembros SET rol = 'coach' WHERE grupo_id = ? AND usuario_id = ?", [grupoId, resto[0].usuario_id]);
+    }
+    return {};
   },
 
   // Pone una contraseña temporal y cierra las sesiones abiertas de ese usuario
@@ -1157,7 +1203,7 @@ const acciones = {
     const [r] = await pool.query(
       `INSERT INTO cuerpro_ejercicios (grupo_id, nombre, musculo_principal, musculos_secundarios, equipo, movimiento)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [grupoId, nombre, musculo, getParam(req, 'musculos_secundarios') || '', equipo, getParam(req, 'movimiento') || '']
+      [grupoId, String(nombre).trim().slice(0, 100), String(musculo).trim().toLowerCase().slice(0, 40), getParam(req, 'musculos_secundarios') || '', equipo, getParam(req, 'movimiento') || '']
     );
     return { id: r.insertId };
   },

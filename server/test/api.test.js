@@ -233,6 +233,10 @@ test('horarios distintos por día, mover, cancelar y agregar encuentros', { skip
 
   // El coach crea un ejercicio propio del grupo
   const ej = await api('ejercicio_crear', { grupo_id: grupoId, nombre: 'Remo en TRX', musculo_principal: 'espalda', equipo: 'otro' }, coach.token);
+  // El músculo se guarda en minúsculas; "piernas" en general vale como zona
+  const enGeneral = await api('ejercicio_crear', { grupo_id: grupoId, nombre: ' Estocadas ', musculo_principal: ' Piernas ', equipo: 'peso_corporal' }, coach.token);
+  const [[estocadas]] = await pool.query('SELECT nombre, musculo_principal FROM cuerpro_ejercicios WHERE id = ?', [enGeneral.id]);
+  assert.deepEqual({ ...estocadas }, { nombre: 'Estocadas', musculo_principal: 'piernas' });
   assert.equal(ej.ok, true, ej.error);
   const cat = await api('ejercicios', { grupo_id: grupoId }, amigo.token);
   assert.ok(cat.ejercicios.some(e => e.id === ej.id && e.grupo_id === grupoId));
@@ -328,11 +332,31 @@ test('superadmin, cambiar y recuperar contraseña', { skip: !enabled && 'Definí
   const resumen = await api('admin_resumen', {}, jefe.token);
   assert.equal(resumen.ok, true, resumen.error);
   assert.ok(resumen.usuarios.some(u => u.email === 'ana@test.ar'));
+
+  // El superadmin suma a Ana a otro grupo y la saca; un usuario común no puede
+  const anaId = resumen.usuarios.find(u => u.email === 'ana@test.ar').id;
+  assert.equal((await api('admin_miembro_agregar', { usuario_id: anaId, grupo_id: delGym.id }, ana.token)).ok, false);
+  const suma = await api('admin_miembro_agregar', { usuario_id: anaId, grupo_id: delGym.id }, jefe.token);
+  assert.equal(suma.ok, true, suma.error);
+  assert.equal((await api('admin_miembro_agregar', { usuario_id: anaId, grupo_id: delGym.id }, jefe.token)).ok, false); // ya está
+  assert.ok((await api('yo', {}, ana.token)).grupos.some(x => x.id === delGym.id));
+  assert.ok((await api('admin_resumen', {}, jefe.token)).membresias.some(m => m.usuario_id === anaId && m.grupo_id === delGym.id));
+  const indAna = (await api('yo', {}, ana.token)).grupos.find(x => x.individual);
+  assert.equal((await api('admin_miembro_agregar', { usuario_id: anaId, grupo_id: indAna.id }, jefe.token)).ok, false);
+  const saca = await api('admin_miembro_quitar', { usuario_id: anaId, grupo_id: delGym.id }, jefe.token);
+  assert.equal(saca.ok, true, saca.error);
+  assert.ok(!(await api('yo', {}, ana.token)).grupos.some(x => x.id === delGym.id));
+  // Si sale el único coach, el más antiguo pasa a coach
+  const jefeId = resumen.usuarios.find(u => u.email === 'jefe@test.ar').id;
+  assert.equal((await api('admin_miembro_quitar', { usuario_id: jefeId, grupo_id: g.grupo.id }, jefe.token)).ok, true);
+  assert.equal((await api('yo', {}, ana.token)).grupos.find(x => x.id === g.grupo.id).rol, 'coach');
+  // Al último no se lo saca: el grupo no puede quedar vacío
+  assert.equal((await api('admin_miembro_quitar', { usuario_id: anaId, grupo_id: g.grupo.id }, jefe.token)).ok, false);
+  await api('admin_miembro_agregar', { usuario_id: jefeId, grupo_id: g.grupo.id, rol: 'coach' }, jefe.token);
   assert.ok(resumen.grupos.length >= 1);
   assert.equal(resumen.usuarios[0].password_hash, undefined);
 
   // Blanquear: la clave vieja deja de andar, la sesión se cierra y entra con la temporal
-  const anaId = resumen.usuarios.find(u => u.email === 'ana@test.ar').id;
   const blanqueo = await api('admin_blanquear', { usuario_id: anaId }, jefe.token);
   assert.match(blanqueo.password, /^[a-z2-9]{8}$/);
   assert.equal((await api('yo', {}, ana.token)).ok, false);

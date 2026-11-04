@@ -453,7 +453,13 @@ export default function PlanScreen() {
                         </View>
                       )}
                     </View>
-                    {!!e.union && k + 1 < d.ejercicios.length && <MarcaUnion tipo={e.union} />}
+                    {k + 1 < d.ejercicios.length && (
+                      <UnirConSiguiente
+                        tipo={e.union}
+                        // Separado → superserie → circuito → separado
+                        onCambiar={() => cambiarEj(i, k, { union: !e.union ? 'superserie' : e.union === 'superserie' ? 'circuito' : null })}
+                      />
+                    )}
                   </ScaleDecorator>
                 );
               }}
@@ -702,6 +708,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.accentGlow, color: Colors.accent, fontWeight: '800', fontSize: 15,
   },
   union: { ...Typography.caption, color: Colors.accent, fontWeight: '600', marginTop: Spacing.xs },
+  unir: { alignSelf: 'flex-start', paddingVertical: 2, marginBottom: Spacing.xs },
+  unirTexto: { ...Typography.caption, color: Colors.textMuted, marginTop: Spacing.xs },
+  unirCambiar: { color: Colors.textSecondary, fontWeight: '400', textDecorationLine: 'underline' },
   ejUnido: { borderTopWidth: 0, paddingTop: 0 },
   ejVista: { borderTopWidth: 1, borderTopColor: Colors.border, paddingVertical: Spacing.sm },
   ejNombre: { ...Typography.body, color: Colors.textPrimary, flexShrink: 1 },
@@ -736,6 +745,22 @@ const cuantos = (n: number, uno: string, varios: string) => `${n} ${n === 1 ? un
 function MarcaUnion({ tipo }: { tipo: Union }) {
   return (
     <Text style={styles.union}>{tipo === 'superserie' ? '↕ Superserie: sin descanso entre los dos' : '↻ Circuito: uno tras otro, descanso al final'}</Text>
+  );
+}
+
+// En el editor, entre un ejercicio y el siguiente: unirlos en superserie o circuito con un toque
+function UnirConSiguiente({ tipo, onCambiar }: { tipo: Union | null; onCambiar: () => void }) {
+  return (
+    <TouchableOpacity onPress={onCambiar} style={styles.unir} hitSlop={6} accessibilityLabel="Unir con el de abajo">
+      {tipo ? (
+        <Text style={styles.union}>
+          {`${tipo === 'superserie' ? '↕ Superserie con el de abajo' : '↻ Circuito con el de abajo'}  ·  `}
+          <Text style={styles.unirCambiar}>{tipo === 'superserie' ? 'pasar a circuito' : 'separar'}</Text>
+        </Text>
+      ) : (
+        <Text style={styles.unirTexto}>+ Hacer superserie con el de abajo</Text>
+      )}
+    </TouchableOpacity>
   );
 }
 

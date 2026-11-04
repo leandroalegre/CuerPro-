@@ -4,6 +4,7 @@
  * - Todos los grupos, con coaches, miembros y plan activo
  * - Ver el plan de cualquier grupo
  * - Blanquear la contraseña de un usuario
+ * - Sumar a un usuario a un grupo o sacarlo
  */
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -37,15 +38,22 @@ interface GrupoAdmin {
   vence: string | null;
 }
 
+interface Membresia { usuario_id: number; grupo_id: number; rol: 'coach' | 'miembro' }
+
 // "2026-10-27" → "27/10/2026"
 const fecha = (f: string | null) => (f ? f.split('-').reverse().join('/') : 'nunca');
 
-async function confirmar(titulo: string, texto: string) {
+async function confirmar(titulo: string, texto: string, boton = 'Blanquear') {
   if (Platform.OS === 'web') return window.confirm(`${titulo}\n\n${texto}`);
   return new Promise<boolean>(ok => Alert.alert(titulo, texto, [
     { text: 'Cancelar', style: 'cancel', onPress: () => ok(false) },
-    { text: 'Blanquear', style: 'destructive', onPress: () => ok(true) },
+    { text: boton, style: 'destructive', onPress: () => ok(true) },
   ]));
+}
+
+function aviso(titulo: string, texto: string) {
+  if (Platform.OS === 'web') window.alert(`${titulo}\n\n${texto}`);
+  else Alert.alert(titulo, texto);
 }
 
 export default function AdminScreen() {
@@ -54,6 +62,9 @@ export default function AdminScreen() {
   const [buscar, setBuscar] = useState('');
   const [usuarios, setUsuarios] = useState<UsuarioAdmin[]>([]);
   const [grupos, setGrupos] = useState<GrupoAdmin[]>([]);
+  const [membresias, setMembresias] = useState<Membresia[]>([]);
+  // Usuario al que se le está eligiendo un grupo para sumarlo
+  const [sumando, setSumando] = useState<number | null>(null);
   const [error, setError] = useState('');
   // Plan abierto de un grupo: undefined = cargando, null = no tiene
   const [planAbierto, setPlanAbierto] = useState<{ grupoId: number; plan?: Plan | null } | null>(null);
@@ -62,9 +73,10 @@ export default function AdminScreen() {
 
   const cargar = useCallback(async () => {
     try {
-      const data = await api<{ usuarios: UsuarioAdmin[]; grupos: GrupoAdmin[] }>('admin_resumen', {}, token);
+      const data = await api<{ usuarios: UsuarioAdmin[]; grupos: GrupoAdmin[]; membresias: Membresia[] }>('admin_resumen', {}, token);
       setUsuarios(data.usuarios);
       setGrupos(data.grupos);
+      setMembresias(data.membresias ?? []);
       setError('');
     } catch (e: any) {
       setError(e.message);
@@ -81,6 +93,29 @@ export default function AdminScreen() {
       setTemporal({ nombre: u.nombre, email: u.email, password: data.password });
     } catch (e: any) {
       Alert.alert('No se pudo', e.message);
+    }
+  };
+
+  const sumarAGrupo = async (u: UsuarioAdmin, g: GrupoAdmin, rol: 'miembro' | 'coach') => {
+    const si = await confirmar('Sumar a un grupo', `¿Sumás a ${u.nombre} a ${g.nombre} como ${rol}? Le llega un aviso.`, 'Sumar');
+    if (!si) return;
+    try {
+      await api('admin_miembro_agregar', { usuario_id: u.id, grupo_id: g.id, rol }, token);
+      setSumando(null);
+      cargar();
+    } catch (e: any) {
+      aviso('No se pudo', e.message);
+    }
+  };
+
+  const quitarDeGrupo = async (u: UsuarioAdmin, g: GrupoAdmin) => {
+    const si = await confirmar('Sacar del grupo', `¿Sacás a ${u.nombre} de ${g.nombre}? Sus series y puntos quedan guardados.`, 'Sacar');
+    if (!si) return;
+    try {
+      await api('admin_miembro_quitar', { usuario_id: u.id, grupo_id: g.id }, token);
+      cargar();
+    } catch (e: any) {
+      aviso('No se pudo', e.message);
     }
   };
 
@@ -145,8 +180,42 @@ export default function AdminScreen() {
                     </View>
                     {!!u.superadmin && <Insignia texto="ADMIN" />}
                   </View>
-                  <Text style={styles.detalle}>{`Grupos: ${u.grupos || 'ninguno (entrena solo)'}`}</Text>
                   <Text style={styles.detalle}>{`Alta ${fecha(u.creado)} · última entrada ${fecha(u.ultima_entrada)}`}</Text>
+                  <Text style={[styles.detalle, { marginTop: Spacing.sm }]}>Grupos (tocá × para sacarlo)</Text>
+                  <View style={styles.chips}>
+                    {membresias.filter(m => m.usuario_id === u.id).map(m => {
+                      const g = grupos.find(x => x.id === m.grupo_id);
+                      if (!g) return null;
+                      return (
+                        <TouchableOpacity key={g.id} style={styles.chip} onPress={() => quitarDeGrupo(u, g)} accessibilityLabel={`Sacar de ${g.nombre}`}>
+                          <Text style={styles.chipTexto}>{`${g.nombre}${m.rol === 'coach' ? ' · coach' : ''}`}</Text>
+                          <Ionicons name="close" size={14} color={Colors.textSecondary} />
+                        </TouchableOpacity>
+                      );
+                    })}
+                    <TouchableOpacity style={[styles.chip, styles.chipSumar]} onPress={() => setSumando(sumando === u.id ? null : u.id)}>
+                      <Ionicons name={sumando === u.id ? 'chevron-up' : 'add'} size={14} color={Colors.accent} />
+                      <Text style={[styles.chipTexto, { color: Colors.accent }]}>Sumar a un grupo</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {sumando === u.id && (
+                    <View style={styles.sumar}>
+                      {grupos.filter(g => !g.individual && !membresias.some(m => m.usuario_id === u.id && m.grupo_id === g.id)).map(g => (
+                        <View key={g.id} style={styles.sumarFila}>
+                          <Text style={[styles.chipTexto, { flex: 1 }]}>{g.nombre}</Text>
+                          <TouchableOpacity style={styles.chip} onPress={() => sumarAGrupo(u, g, 'miembro')}>
+                            <Text style={styles.chipTexto}>Miembro</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.chip} onPress={() => sumarAGrupo(u, g, 'coach')}>
+                            <Text style={styles.chipTexto}>Coach</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                      {!grupos.some(g => !g.individual && !membresias.some(m => m.usuario_id === u.id && m.grupo_id === g.id)) && (
+                        <Text style={styles.detalle}>Ya está en todos los grupos.</Text>
+                      )}
+                    </View>
+                  )}
                   <Boton titulo="Blanquear contraseña" tipo="secundario" onPress={() => blanquear(u)} style={{ marginTop: Spacing.sm }} />
                 </Card>
               ))
@@ -213,6 +282,15 @@ const styles = StyleSheet.create({
   pestanaActiva: { backgroundColor: Colors.accent },
   pestanaTexto: { ...Typography.label, color: Colors.textPrimary },
   fila: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.xs, marginTop: Spacing.xs },
+  chip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 6, paddingHorizontal: 10,
+    borderRadius: Radius.full, backgroundColor: Colors.bgMuted,
+  },
+  chipSumar: { borderWidth: 1, borderColor: Colors.accent, backgroundColor: 'transparent' },
+  chipTexto: { ...Typography.label, color: Colors.textPrimary },
+  sumar: { marginTop: Spacing.sm, gap: Spacing.xs },
+  sumarFila: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
   nombre: { ...Typography.titleMd, color: Colors.textPrimary },
   detalle: { ...Typography.caption, color: Colors.textSecondary, marginTop: 2 },
   dia: { marginTop: Spacing.sm, paddingTop: Spacing.sm, borderTopWidth: 1, borderTopColor: Colors.border },

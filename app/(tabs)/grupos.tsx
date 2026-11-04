@@ -15,7 +15,7 @@ import { Boton, Campo, Card, Etiqueta, pantalla, Texto, Titulo } from '../../com
 import { APP_VERSION, DESARROLLADOR, URL_DESCARGA } from '../../constants/app';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { useSesion } from '../../hooks/useSesion';
-import { api } from '../../lib/api';
+import { api, primerNombre } from '../../lib/api';
 
 const ZONAS: Record<string, string> = {
   piernas: 'Piernas', espalda: 'Espalda', pecho: 'Pecho', hombros: 'Hombros', brazos: 'Brazos', abdominales: 'Abdominales',
@@ -155,7 +155,7 @@ export default function GruposScreen() {
 
   return (
     <ScrollView style={pantalla.scroll} contentContainerStyle={pantalla.contenido} keyboardShouldPersistTaps="handled">
-      <Etiqueta>{`Hola, ${usuario?.nombre ?? ''}`}</Etiqueta>
+      <Etiqueta>{`Hola, ${primerNombre(usuario?.nombre)}`}</Etiqueta>
 
       {grupos.length > 0 && (
         <Card>

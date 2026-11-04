@@ -1,4 +1,4 @@
-export const APP_VERSION = '0.3.1';
+export const APP_VERSION = '0.3.2';
 export const DESARROLLADOR = 'Leandro Alegre';
 export const URL_TERMINOS = 'https://cuerpro.sistemascloud.ar/terminos.html';
 export const URL_PRIVACIDAD = 'https://cuerpro.sistemascloud.ar/privacidad.html';

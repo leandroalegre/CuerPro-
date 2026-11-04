@@ -79,6 +79,28 @@ export interface Objetivo {
   texto: string;
 }
 
+// Zonas del cuerpo para elegir el músculo principal: primero la zona y después,
+// si tiene varios, cuál. El nombre de la zona sola (ej "piernas") también vale.
+// Igual que ZONAS en server/index.js.
+export const ZONAS_MUSCULO: { zona: string; nombre: string; musculos: string[] }[] = [
+  { zona: 'piernas', nombre: 'Piernas', musculos: ['cuadriceps', 'isquios', 'gluteos', 'gemelos', 'aductores'] },
+  { zona: 'espalda', nombre: 'Espalda', musculos: ['espalda', 'lumbares'] },
+  { zona: 'pecho', nombre: 'Pecho', musculos: ['pecho'] },
+  { zona: 'hombros', nombre: 'Hombros', musculos: ['hombros'] },
+  { zona: 'brazos', nombre: 'Brazos', musculos: ['biceps', 'triceps', 'antebrazos'] },
+  { zona: 'abdominales', nombre: 'Abdominales', musculos: ['abdominales'] },
+  { zona: 'cardio', nombre: 'Cardio', musculos: ['cardio'] },
+];
+
+/** La zona de un músculo ("cuadriceps" → piernas); null si es uno propio que no está en ninguna */
+export function zonaDe(musculo: string) {
+  const m = musculo.trim().toLowerCase();
+  return ZONAS_MUSCULO.find(z => z.zona === m || z.musculos.includes(m)) ?? null;
+}
+
+/** Para saludar: "Leandro Alegre" → "Leandro" */
+export const primerNombre = (nombre?: string | null) => (nombre ?? '').trim().split(/\s+/)[0] ?? '';
+
 export const EQUIPO: Record<string, string> = {
   maquina: 'máquina',
   mancuerna: 'mancuernas',
