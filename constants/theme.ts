@@ -43,6 +43,15 @@ export const NivelColor: Record<string, string> = {
   Diamante: '#8ab4ff',
 };
 
+// Medalla de cada nivel (assets/images/nivel-*.png)
+export const NivelMedalla: Record<string, number> = {
+  Bronce:   require('../assets/images/nivel-bronce.png'),
+  Plata:    require('../assets/images/nivel-plata.png'),
+  Oro:      require('../assets/images/nivel-oro.png'),
+  Platino:  require('../assets/images/nivel-platino.png'),
+  Diamante: require('../assets/images/nivel-diamante.png'),
+};
+
 export const Spacing = {
   xs:  4,
   sm:  8,

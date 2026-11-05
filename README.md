@@ -41,7 +41,7 @@ CUERPRO_TEST_DB=1 DB_NAME=cuerpro_test DB_USER=... DB_PASS=... npm test
 1. En el panel, crear la base `sistemacbahost_cuerpro` y el usuario `sistemacbahost_cuerpro_api` con todos los permisos sobre esa base.
 2. Crear el subdominio `cuerpro.sistemascloud.ar`.
 3. Subir la carpeta `server/` a `/home/sistemacbahost/cuerpro-api/`, crear el `.env` con los datos reales y correr `./deploy.sh` (instala dependencias y levanta `cuerpro-api` con pm2 en el puerto 3031).
-4. Copiar `web/index.html` y `web/.htaccess` a la carpeta del subdominio. El `.htaccess` manda `https://cuerpro.sistemascloud.ar/api.php` a la API.
+4. Generar la app web con `npx expo export --platform web` (sale en `dist/`) y copiar el contenido de `dist/`, `web/descargar.html`, `web/logo.png`, `web/favicon.png` y `web/.htaccess` a la carpeta del subdominio. La raíz es la app web, `/descargar.html` es la página de descarga, y el `.htaccess` manda `https://cuerpro.sistemascloud.ar/api.php` a la API.
 5. Probar: `https://cuerpro.sistemascloud.ar/api.php?action=ping` tiene que devolver `{"ok":true,...}`.
 
 La app ya apunta a `https://cuerpro.sistemascloud.ar/api.php` (`constants/api.ts`).
@@ -69,7 +69,6 @@ Niveles por mes: Bronce 0, Plata 100, Oro 200, Platino 300, Diamante 380. Al emp
 
 ## Qué falta
 
-- Pantalla para armar el plan (la API `plan_guardar` ya está) y pantalla de propuestas al coach.
 - Puntos semanales (semana completa, rutina completa, sin avisos) y recordatorio antes del encuentro: necesitan una tarea programada.
 - Biblioteca de planes publicados entre grupos.
 - Ranking entre grupos.

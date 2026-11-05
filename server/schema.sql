@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS cuerpro_usuarios (
   nombre        VARCHAR(100) NOT NULL,
   email         VARCHAR(150) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
+  superadmin    TINYINT(1) NOT NULL DEFAULT 0,
+  inicio        VARCHAR(255) DEFAULT NULL,
   foto_url      VARCHAR(255) DEFAULT NULL,
   created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uniq_email (email)
@@ -19,6 +21,17 @@ CREATE TABLE IF NOT EXISTS cuerpro_sesiones (
   FOREIGN KEY (usuario_id) REFERENCES cuerpro_usuarios(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Código para recuperar la contraseña por email (se guarda el hash, vence a los 30 minutos)
+CREATE TABLE IF NOT EXISTS cuerpro_recuperaciones (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  usuario_id  INT NOT NULL,
+  codigo_hash CHAR(64) NOT NULL,
+  intentos    TINYINT NOT NULL DEFAULT 0,
+  vence       DATETIME NOT NULL,
+  created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (usuario_id) REFERENCES cuerpro_usuarios(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Grupo de amigos que entrena junto en el mismo gym
 CREATE TABLE IF NOT EXISTS cuerpro_grupos (
   id                 INT AUTO_INCREMENT PRIMARY KEY,
@@ -27,7 +40,10 @@ CREATE TABLE IF NOT EXISTS cuerpro_grupos (
   codigo_invitacion  VARCHAR(12)  NOT NULL,
   -- 'todos': cualquier miembro puede editar el plan; 'algunos': solo los coaches
   quien_edita        ENUM('todos','algunos') NOT NULL DEFAULT 'algunos',
-  dias_aviso_musculo INT NOT NULL DEFAULT 5,
+  -- 1: espacio Individual de un usuario (para entrenar solo, nadie más se suma)
+  individual         TINYINT(1) NOT NULL DEFAULT 0,
+  dias_aviso_musculo INT NOT NULL DEFAULT 5,  -- ya no se usa: ver dias_por_zona
+  dias_por_zona VARCHAR(255) DEFAULT NULL,    -- JSON {piernas: 7, ...}, lo que falta usa ZONAS
   ranking_grupo      TINYINT(1) NOT NULL DEFAULT 0,
   ranking_global     TINYINT(1) NOT NULL DEFAULT 0,
   created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -74,6 +90,8 @@ CREATE TABLE IF NOT EXISTS cuerpro_planes (
   nombre      VARCHAR(100) NOT NULL,
   activo      TINYINT(1) NOT NULL DEFAULT 1,
   publicado   TINYINT(1) NOT NULL DEFAULT 0,
+  archivado   TINYINT(1) NOT NULL DEFAULT 0, -- versión vieja de un plan editado
+  vence       DATE DEFAULT NULL,             -- cuándo conviene cambiarlo (lo pone el coach)
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (grupo_id)   REFERENCES cuerpro_grupos(id)   ON DELETE CASCADE,
   FOREIGN KEY (usuario_id) REFERENCES cuerpro_usuarios(id) ON DELETE CASCADE
@@ -95,6 +113,10 @@ CREATE TABLE IF NOT EXISTS cuerpro_plan_ejercicios (
   series        INT NOT NULL DEFAULT 3,
   repeticiones  VARCHAR(20) NOT NULL DEFAULT '10',
   peso_sugerido DECIMAL(6,2) DEFAULT NULL,
+  carga         ENUM('liviano','moderado','pesado') DEFAULT NULL, -- cuando no hay kilos
+  descanso_seg  INT DEFAULT NULL,                                 -- pausa entre series
+  nota          VARCHAR(200) DEFAULT NULL,                        -- indicación técnica del coach
+  union_siguiente ENUM('superserie','circuito') DEFAULT NULL,     -- va junto con el ejercicio que sigue
   FOREIGN KEY (dia_id)       REFERENCES cuerpro_plan_dias(id)  ON DELETE CASCADE,
   FOREIGN KEY (ejercicio_id) REFERENCES cuerpro_ejercicios(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -114,6 +136,9 @@ CREATE TABLE IF NOT EXISTS cuerpro_encuentros (
   grupo_id   INT NOT NULL,
   fecha_hora DATETIME NOT NULL,
   dia_id     INT DEFAULT NULL,
+  -- Si el coach lo movió: la fecha del horario fijo que reemplaza
+  fecha_original DATETIME DEFAULT NULL,
+  cancelado  TINYINT(1) NOT NULL DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uniq_grupo_fecha (grupo_id, fecha_hora),
   FOREIGN KEY (grupo_id) REFERENCES cuerpro_grupos(id)    ON DELETE CASCADE,
@@ -140,6 +165,7 @@ CREATE TABLE IF NOT EXISTS cuerpro_confirmaciones (
   usuario_id   INT NOT NULL,
   va           TINYINT(1) DEFAULT NULL,
   asistio      TINYINT(1) DEFAULT NULL,
+  nota         VARCHAR(140) DEFAULT NULL,  -- "llego 15 tarde", etc.
   updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (encuentro_id, usuario_id),
   FOREIGN KEY (encuentro_id) REFERENCES cuerpro_encuentros(id) ON DELETE CASCADE,
@@ -150,6 +176,9 @@ CREATE TABLE IF NOT EXISTS cuerpro_series (
   id           INT AUTO_INCREMENT PRIMARY KEY,
   usuario_id   INT NOT NULL,
   encuentro_id INT DEFAULT NULL,
+  -- Por su cuenta: con qué grupo y qué día del plan entrenó (con el grupo sale del encuentro)
+  grupo_id     INT DEFAULT NULL,
+  dia_id       INT DEFAULT NULL,
   ejercicio_id INT NOT NULL,
   numero       INT NOT NULL,
   repeticiones INT NOT NULL,
@@ -159,6 +188,21 @@ CREATE TABLE IF NOT EXISTS cuerpro_series (
   FOREIGN KEY (usuario_id)   REFERENCES cuerpro_usuarios(id)   ON DELETE CASCADE,
   FOREIGN KEY (encuentro_id) REFERENCES cuerpro_encuentros(id) ON DELETE SET NULL,
   FOREIGN KEY (ejercicio_id) REFERENCES cuerpro_ejercicios(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Día del plan que alguien hizo y no anotó (lo marca después, sin series)
+CREATE TABLE IF NOT EXISTS cuerpro_dias_hechos (
+  id         INT AUTO_INCREMENT PRIMARY KEY,
+  usuario_id INT NOT NULL,
+  grupo_id   INT NOT NULL,
+  dia_id     INT NOT NULL,
+  fecha      DATE NOT NULL,
+  fecha_hora DATETIME NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_usuario_grupo_fecha (usuario_id, grupo_id, fecha),
+  FOREIGN KEY (usuario_id) REFERENCES cuerpro_usuarios(id)  ON DELETE CASCADE,
+  FOREIGN KEY (grupo_id)   REFERENCES cuerpro_grupos(id)    ON DELETE CASCADE,
+  FOREIGN KEY (dia_id)     REFERENCES cuerpro_plan_dias(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Propuestas de cambios al plan que hacen los miembros
