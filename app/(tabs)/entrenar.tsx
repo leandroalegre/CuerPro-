@@ -13,6 +13,9 @@
  *   olvidaste de anotar (con series, o "Ya lo hice" sin series), así lo que te toca avanza
  * - Al lado de cada músculo, cuánto se recuperó desde la última vez
  * - Con el grupo, el coach puede cambiar qué día del plan se hace en el encuentro
+ * - Cada serie se guarda al tocar "Guardar serie"; si salís y volvés, las anotadas siguen ahí
+ * - Tocando una serie anotada se corrige (peso y repeticiones) o se borra
+ * - En cada ejercicio, lo que hiciste las últimas veces
  */
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
@@ -372,8 +375,25 @@ function ListaRutina({
   recuperacion: Recuperacion[];
   onCambio: () => void;
 }) {
+  const { token } = useSesion();
   const [orden, setOrden] = useState<number[]>([]);
   const porId = new Map(rutina.map(e => [e.plan_ejercicio_id, e]));
+
+  // Las series ya anotadas en este entrenamiento y las de las últimas veces
+  const [series, setSeries] = useState<SeriesEjercicios | null>(null);
+  const ids = [...new Set(rutina.flatMap(e => [e.ejercicio_id, ...(e.cambio ? [e.cambio.ejercicio_id] : []), ...e.alternativas.map(a => a.ejercicio_id)]))];
+  const claveIds = ids.join(',');
+  useEffect(() => {
+    if (!token || !ids.length) return;
+    let vivo = true;
+    const contexto = encuentroId !== null
+      ? { encuentro_id: encuentroId }
+      : cuenta ? { grupo_id: cuenta.grupoId, ...(cuenta.fecha && { fecha: cuenta.fecha }) } : {};
+    api<SeriesEjercicios>('series_ejercicios', { ejercicio_ids: ids, ...contexto }, token)
+      .then(d => vivo && setSeries(d))
+      .catch(() => vivo && setSeries({ actuales: {}, anteriores: {} }));
+    return () => { vivo = false; };
+  }, [token, claveIds, encuentroId, cuenta?.grupoId, cuenta?.fecha]);
   // Respeta el orden que armaste; lo que no estaba (o si cambió el plan) va al final, en el orden del plan
   const datos = [
     ...orden.map(id => porId.get(id)).filter((e): e is EjercicioRutina => !!e),
@@ -394,6 +414,7 @@ function ListaRutina({
             ej={item}
             encuentroId={encuentroId}
             cuenta={cuenta}
+            series={series}
             recuperacion={recuperacion.find(r => r.musculo === item.musculo_principal) ?? null}
             onCambio={onCambio}
             drag={drag}
@@ -410,6 +431,7 @@ function EjercicioCard({
   ej,
   encuentroId,
   cuenta,
+  series,
   recuperacion,
   onCambio,
   drag,
@@ -419,6 +441,7 @@ function EjercicioCard({
   ej: EjercicioRutina;
   encuentroId: number | null; // null: por mi cuenta
   cuenta?: Cuenta;
+  series: SeriesEjercicios | null; // null: cargando
   recuperacion: Recuperacion | null; // null: el músculo está al 100%
   onCambio: () => void;
   drag: () => void;
@@ -429,7 +452,10 @@ function EjercicioCard({
   const [verAlternativas, setVerAlternativas] = useState(false);
   const [reps, setReps] = useState(String(ej.repeticiones).split('-')[0]);
   const [peso, setPeso] = useState(ej.peso_sugerido ? String(Number(ej.peso_sugerido)) : '');
-  const [hechas, setHechas] = useState<{ reps: number; peso: number; record: boolean }[]>([]);
+  const [hechas, setHechas] = useState<Hecha[]>([]);
+  // La serie anotada que se está corrigiendo (índice en hechas)
+  const [editando, setEditando] = useState<number | null>(null);
+  const [verMasHistorial, setVerMasHistorial] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [finDescanso, setFinDescanso] = useState<number | null>(null);
   const [saltado, setSaltado] = useState(false); // no se hace hoy: queda chiquito, se puede deshacer
@@ -440,6 +466,23 @@ function EjercicioCard({
   const propia = ej.alternativas.find(a => a.ejercicio_id === cambioPropio);
 
   const actual = propia ?? ej.cambio ?? { ejercicio_id: ej.ejercicio_id, nombre: ej.nombre, equipo: ej.equipo };
+  const anteriores = series?.anteriores[actual.ejercicio_id] ?? [];
+
+  // Cuando llegan del servidor: las series que ya anotaste hoy (si saliste y volviste)
+  // y, si el plan no dice peso, el de la última vez
+  const [restaurado, setRestaurado] = useState(false);
+  useEffect(() => {
+    if (!series || restaurado) return;
+    setRestaurado(true);
+    const ya = series.actuales[actual.ejercicio_id] ?? [];
+    if (ya.length && !hechas.length) {
+      setHechas(ya.map(s => ({ id: s.id, reps: s.repeticiones, peso: s.peso, record: false })));
+      setPeso(String(ya[ya.length - 1].peso));
+    } else if (!ej.peso_sugerido && !peso) {
+      const ultima = anteriores[0]?.series;
+      if (ultima?.length) setPeso(String(ultima[ultima.length - 1].peso));
+    }
+  }, [series]);
 
   const elegir = async (ejercicioId: number) => {
     if (encuentroId === null) {
@@ -460,12 +503,13 @@ function EjercicioCard({
     const r = Number(reps);
     const p = Number(peso.replace(',', '.') || 0);
     if (!r) {
-      Alert.alert('Faltan las repeticiones');
+      avisar('Faltan las repeticiones', 'Poné cuántas repeticiones hiciste.');
       return;
     }
+    if (!(await pareceBien(r, p))) return;
     setGuardando(true);
     try {
-      const data = await api<{ record: boolean; sumo: boolean }>('serie_guardar', {
+      const data = await api<{ id: number; record: boolean; sumo: boolean }>('serie_guardar', {
         ...(encuentroId !== null && { encuentro_id: encuentroId }),
         ...(encuentroId === null && cuenta && { grupo_id: cuenta.grupoId, dia_id: cuenta.diaId, ...(cuenta.fecha && { fecha: cuenta.fecha }) }),
         ejercicio_id: actual.ejercicio_id,
@@ -473,15 +517,41 @@ function EjercicioCard({
         repeticiones: r,
         peso: p,
       }, token);
-      setHechas([...hechas, { reps: r, peso: p, record: data.record }]);
+      setHechas([...hechas, { id: data.id, reps: r, peso: p, record: data.record }]);
       // En superserie o circuito se pasa directo al siguiente; el descanso va al final de la vuelta
       if (ej.descanso_seg && !ej.union_siguiente && hechas.length + 1 < ej.series) setFinDescanso(Date.now() + ej.descanso_seg * 1000);
       if (data.record) avisar('¡Récord personal!', `Sumaste 15 puntos con ${p} kg.`);
       else if (data.sumo) avisar('¡Entrenamiento sumado!', cuenta?.nombre ? `Sumaste 10 puntos en ${cuenta.nombre}, como si hubieras ido.` : 'Sumaste 10 puntos.');
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      avisar('No se guardó la serie', `${e.message}. Probá de nuevo.`);
     } finally {
       setGuardando(false);
+    }
+  };
+
+  // Corregir o borrar una serie ya anotada
+  const corregir = async (i: number, r: number, p: number) => {
+    const s = hechas[i];
+    if (!s?.id) return;
+    if (!(await pareceBien(r, p))) return;
+    try {
+      const data = await api<{ record: boolean }>('serie_editar', { serie_id: s.id, repeticiones: r, peso: p }, token);
+      setHechas(hechas.map((h, j) => (j === i ? { ...h, reps: r, peso: p, record: data.record } : h)));
+      setEditando(null);
+    } catch (e: any) {
+      avisar('No se pudo corregir', e.message);
+    }
+  };
+  const borrar = async (i: number) => {
+    const s = hechas[i];
+    if (!s?.id) return;
+    if (!(await confirmar('Borrar serie', `¿Borrás la serie ${i + 1} (${s.peso} kg × ${s.reps})?`))) return;
+    try {
+      await api('serie_borrar', { serie_id: s.id }, token);
+      setHechas(hechas.filter((_, j) => j !== i));
+      setEditando(null);
+    } catch (e: any) {
+      avisar('No se pudo borrar', e.message);
     }
   };
 
@@ -542,11 +612,37 @@ function EjercicioCard({
       )}
       {!!ej.nota && <Text style={styles.nota}>{ej.nota}</Text>}
 
+      {!porTiempo && anteriores.length > 0 && (
+        <View style={styles.historial}>
+          {(verMasHistorial ? anteriores : anteriores.slice(0, 1)).map((v, i) => (
+            <Text key={v.fecha} style={styles.historialTexto}>
+              <Text style={styles.historialFecha}>{`${i === 0 ? 'Última vez' : 'Antes'} (${fechaCorta(v.fecha)}): `}</Text>
+              {v.series.map(x => `${x.peso}×${x.repeticiones}`).join('  ')}
+            </Text>
+          ))}
+          <Text style={styles.historialFecha}>kg × repeticiones</Text>
+          {anteriores.length > 1 && (
+            <TouchableOpacity onPress={() => setVerMasHistorial(!verMasHistorial)} hitSlop={8}>
+              <Text style={styles.historialMas}>{verMasHistorial ? 'Ver menos' : `Ver las ${anteriores.length} últimas veces`}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
       {!porTiempo && hechas.map((s, i) => (
-        <Text key={i} style={styles.serie}>
-          {`Serie ${i + 1}: ${s.reps} reps × ${s.peso} kg${s.record ? '  🏆' : ''}`}
-        </Text>
+        editando === i ? (
+          <EditarSerie key={s.id ?? i} numero={i + 1} serie={s} onGuardar={(r, p) => corregir(i, r, p)} onBorrar={() => borrar(i)} onCancelar={() => setEditando(null)} />
+        ) : (
+          <TouchableOpacity key={s.id ?? i} onPress={() => s.id && setEditando(i)} style={styles.filaSerie} accessibilityLabel={`Corregir serie ${i + 1}`}>
+            <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+            <Text style={styles.serie}>{`Serie ${i + 1}: ${s.peso} kg × ${s.reps} reps${s.record ? '  🏆' : ''}`}</Text>
+            {!!s.id && <Ionicons name="pencil" size={14} color={Colors.textMuted} style={{ marginLeft: 'auto' }} />}
+          </TouchableOpacity>
+        )
       ))}
+      {!porTiempo && hechas.some(h => h.id) && editando === null && (
+        <Text style={styles.ayuda}>Guardadas. Tocá una serie para corregirla.</Text>
+      )}
 
       {finDescanso && <Descanso fin={finDescanso} onTerminar={() => setFinDescanso(null)} />}
 
@@ -559,11 +655,20 @@ function EjercicioCard({
       )}
 
       {!porTiempo && hechas.length < ej.series && (
-        <View style={styles.fila}>
-          <Campo style={styles.campo} value={reps} onChangeText={setReps} keyboardType="number-pad" placeholder="Reps" />
-          <Campo style={styles.campo} value={peso} onChangeText={setPeso} keyboardType="decimal-pad" placeholder="Kg" />
-          <Boton titulo={`Serie ${hechas.length + 1}`} onPress={guardarSerie} cargando={guardando} style={styles.boton} />
-        </View>
+        <>
+          <View style={styles.fila}>
+            <View style={styles.columna}>
+              <Text style={styles.rotulo}>Peso (kg)</Text>
+              <Campo style={styles.campo} value={peso} onChangeText={setPeso} keyboardType="decimal-pad" placeholder="0" selectTextOnFocus accessibilityLabel="Peso en kilos" />
+            </View>
+            <Text style={styles.por}>×</Text>
+            <View style={styles.columna}>
+              <Text style={styles.rotulo}>Repeticiones</Text>
+              <Campo style={styles.campo} value={reps} onChangeText={setReps} keyboardType="number-pad" placeholder="0" selectTextOnFocus accessibilityLabel="Repeticiones" />
+            </View>
+          </View>
+          <Boton titulo={`Guardar serie ${hechas.length + 1} de ${ej.series}`} onPress={guardarSerie} cargando={guardando} style={{ marginTop: Spacing.sm }} />
+        </>
       )}
 
       {(ej.alternativas.length > 0 || ej.cambio) && (
@@ -588,6 +693,74 @@ function EjercicioCard({
         </View>
       )}
     </Card>
+  );
+}
+
+interface Hecha { id?: number; reps: number; peso: number; record: boolean }
+interface SeriesEjercicios {
+  // Por ejercicio: lo anotado en este entrenamiento
+  actuales: Record<number, { id: number; numero: number; repeticiones: number; peso: number }[]>;
+  // Por ejercicio: las últimas 3 veces, de la más nueva a la más vieja
+  anteriores: Record<number, { fecha: string; series: { repeticiones: number; peso: number }[] }[]>;
+}
+
+async function confirmar(titulo: string, texto: string, boton = 'Borrar') {
+  if (Platform.OS === 'web') return window.confirm(`${titulo}\n\n${texto}`);
+  return new Promise<boolean>(ok => Alert.alert(titulo, texto, [
+    { text: 'Cancelar', style: 'cancel', onPress: () => ok(false) },
+    { text: boton, onPress: () => ok(true) },
+  ]));
+}
+
+// Si parece que se invirtieron peso y repeticiones, pregunta antes de guardar
+async function pareceBien(reps: number, peso: number) {
+  if (reps <= 30) return true;
+  return confirmar('¿Está bien?', `Pusiste ${reps} repeticiones con ${peso} kg. ¿No será al revés?`, 'Sí, está bien');
+}
+
+// Corregir una serie ya anotada
+function EditarSerie({ numero, serie, onGuardar, onBorrar, onCancelar }: {
+  numero: number;
+  serie: Hecha;
+  onGuardar: (reps: number, peso: number) => Promise<void>;
+  onBorrar: () => void;
+  onCancelar: () => void;
+}) {
+  const [peso, setPeso] = useState(String(serie.peso));
+  const [reps, setReps] = useState(String(serie.reps));
+  const [guardando, setGuardando] = useState(false);
+  const guardar = async () => {
+    const r = Number(reps);
+    if (!r) return avisar('Faltan las repeticiones', 'Poné cuántas repeticiones hiciste.');
+    setGuardando(true);
+    await onGuardar(r, Number(peso.replace(',', '.') || 0));
+    setGuardando(false);
+  };
+  return (
+    <View style={styles.editar}>
+      <Text style={styles.rotulo}>{`Corregir serie ${numero}`}</Text>
+      <View style={styles.fila}>
+        <View style={styles.columna}>
+          <Text style={styles.rotulo}>Peso (kg)</Text>
+          <Campo style={styles.campo} value={peso} onChangeText={setPeso} keyboardType="decimal-pad" selectTextOnFocus />
+        </View>
+        <Text style={styles.por}>×</Text>
+        <View style={styles.columna}>
+          <Text style={styles.rotulo}>Repeticiones</Text>
+          <Campo style={styles.campo} value={reps} onChangeText={setReps} keyboardType="number-pad" selectTextOnFocus />
+        </View>
+      </View>
+      <TouchableOpacity onPress={() => { setPeso(reps); setReps(peso); }} style={{ marginTop: Spacing.sm }}>
+        <Text style={styles.historialMas}>⇄ Invertir peso y repeticiones</Text>
+      </TouchableOpacity>
+      <View style={[styles.fila, { marginTop: Spacing.sm }]}>
+        <Boton titulo="Guardar" onPress={guardar} cargando={guardando} style={{ flex: 1 }} />
+        <Boton titulo="Cancelar" tipo="secundario" onPress={onCancelar} style={{ flex: 1 }} />
+      </View>
+      <TouchableOpacity onPress={onBorrar} style={{ marginTop: Spacing.sm, alignSelf: 'center' }}>
+        <Text style={[styles.historialMas, { color: '#ef4444' }]}>Borrar esta serie</Text>
+      </TouchableOpacity>
+    </View>
   );
 }
 
@@ -651,10 +824,19 @@ const styles = StyleSheet.create({
   modo: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: Radius.full, backgroundColor: Colors.bgMuted },
   modoActivo: { backgroundColor: Colors.accent },
   modoTexto: { ...Typography.label, color: Colors.textPrimary },
-  fila: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'flex-start', marginTop: Spacing.md },
-  campo: { flex: 1, minWidth: 0, marginBottom: 0 },
-  boton: { minWidth: 104, paddingVertical: 12 },
-  serie: { ...Typography.body, color: Colors.success, marginTop: Spacing.xs },
+  fila: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'flex-end', marginTop: Spacing.md },
+  columna: { flex: 1, minWidth: 0 },
+  rotulo: { ...Typography.label, color: Colors.textSecondary, marginBottom: 4 },
+  campo: { marginBottom: 0, textAlign: 'center', fontWeight: '700' },
+  por: { ...Typography.titleMd, color: Colors.textMuted, paddingBottom: 12 },
+  serie: { ...Typography.body, color: Colors.success },
+  filaSerie: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6 },
+  ayuda: { ...Typography.caption, color: Colors.textMuted, marginTop: 2 },
+  editar: { marginTop: Spacing.xs, padding: Spacing.sm, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.accent },
+  historial: { marginTop: Spacing.sm, padding: Spacing.sm, borderRadius: Radius.md, backgroundColor: Colors.bgMuted, gap: 2 },
+  historialTexto: { ...Typography.caption, color: Colors.textPrimary },
+  historialFecha: { ...Typography.caption, color: Colors.textSecondary, fontWeight: '600' },
+  historialMas: { ...Typography.caption, color: Colors.accent, fontWeight: '600' },
   botonChico: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: Radius.full, backgroundColor: Colors.bgMuted },
   botonChicoTexto: { ...Typography.label, color: Colors.textSecondary, fontWeight: '600' },
   saltado: { opacity: 0.6, paddingVertical: Spacing.sm },

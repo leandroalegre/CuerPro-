@@ -135,6 +135,35 @@ test('flujo completo de un grupo', { skip: !enabled && 'Definí CUERPRO_TEST_DB=
   assert.equal((await api('serie_guardar', { encuentro_id: enc.id, ejercicio_id: press, numero: 1, repeticiones: 10, peso: 40 }, amigo.token)).record, false);
   assert.equal((await api('serie_guardar', { encuentro_id: enc.id, ejercicio_id: press, numero: 2, repeticiones: 8, peso: 45 }, amigo.token)).record, true);
 
+  // Las series anotadas vuelven si salís de la pantalla; las de otro no se pueden tocar
+  const ya = await api('series_ejercicios', { ejercicio_ids: [press], encuentro_id: enc.id }, amigo.token);
+  assert.equal(ya.ok, true, ya.error);
+  assert.deepEqual(ya.actuales[press].map(x => [x.repeticiones, x.peso]), [[10, 40], [8, 45]]);
+  assert.deepEqual(ya.anteriores, {});
+  const segunda = ya.actuales[press][1].id;
+  assert.equal((await api('serie_editar', { serie_id: segunda, repeticiones: 45, peso: 8 }, coach.token)).ok, false);
+  // Invirtió peso y repeticiones: al corregirla ya no es récord
+  const corr = await api('serie_editar', { serie_id: segunda, repeticiones: 45, peso: 8 }, amigo.token);
+  assert.equal(corr.ok, true, corr.error);
+  assert.equal(corr.record, false);
+  const [[sinRecord]] = await pool.query("SELECT COUNT(*) AS n FROM cuerpro_puntos WHERE usuario_id = ? AND motivo = 'record'", [amigo.usuario.id]);
+  assert.equal(sinRecord.n, 0);
+  // Si la vuelve a dejar bien, vuelve el récord
+  assert.equal((await api('serie_editar', { serie_id: segunda, repeticiones: 8, peso: 45 }, amigo.token)).record, true);
+  // Con una vez anterior (otro día), superar la marca vuelve a ser récord
+  await pool.query('UPDATE cuerpro_series SET created_at = created_at - INTERVAL 2 DAY, encuentro_id = NULL WHERE id = ?', [ya.actuales[press][0].id]);
+  assert.equal((await api('serie_editar', { serie_id: segunda, repeticiones: 8, peso: 45 }, amigo.token)).record, true);
+  const hist = await api('series_ejercicios', { ejercicio_ids: String(press), encuentro_id: enc.id }, amigo.token);
+  assert.equal(hist.actuales[press].length, 1);
+  assert.deepEqual(hist.anteriores[press][0].series, [{ repeticiones: 10, peso: 40 }]);
+  // Borrar una serie; después todo vuelve a como estaba
+  const extra = await api('serie_guardar', { encuentro_id: enc.id, ejercicio_id: press, numero: 3, repeticiones: 5, peso: 30 }, amigo.token);
+  assert.equal((await api('serie_borrar', { serie_id: extra.id }, coach.token)).ok, false);
+  assert.equal((await api('serie_borrar', { serie_id: extra.id }, amigo.token)).ok, true);
+  assert.equal((await api('series_ejercicios', { ejercicio_ids: [press], encuentro_id: enc.id }, amigo.token)).actuales[press].length, 1);
+  await pool.query('UPDATE cuerpro_series SET created_at = created_at + INTERVAL 2 DAY, encuentro_id = ? WHERE id = ?', [enc.id, ya.actuales[press][0].id]);
+  await api('serie_editar', { serie_id: segunda, repeticiones: 8, peso: 45 }, amigo.token);
+
   const prog = await api('progreso', {}, amigo.token);
   assert.equal(prog.ok, true, prog.error);
   assert.equal(prog.nivel.puntos, 25);
@@ -328,10 +357,18 @@ test('superadmin, cambiar y recuperar contraseña', { skip: !enabled && 'Definí
   const ajeno = await api('admin_plan', { grupo_id: delGym.id }, jefe.token);
   assert.equal(ajeno.ok, true, ajeno.error);
   assert.ok(ajeno.plan.dias.length > 0);
+  assert.ok(Array.isArray(ajeno.ejercicios));
+  assert.ok(ajeno.planes.length > 0);
 
   const resumen = await api('admin_resumen', {}, jefe.token);
   assert.equal(resumen.ok, true, resumen.error);
   assert.ok(resumen.usuarios.some(u => u.email === 'ana@test.ar'));
+  // Cada usuario trae su Individual, para ver lo que armó solo
+  const anaRes = resumen.usuarios.find(u => u.email === 'ana@test.ar');
+  assert.ok(anaRes.individual_id);
+  const suyo = await api('admin_plan', { grupo_id: anaRes.individual_id }, jefe.token);
+  assert.equal(suyo.ok, true, suyo.error);
+  assert.ok('planes' in resumen.grupos[0] && 'ejercicios' in resumen.grupos[0]);
 
   // El superadmin suma a Ana a otro grupo y la saca; un usuario común no puede
   const anaId = resumen.usuarios.find(u => u.email === 'ana@test.ar').id;

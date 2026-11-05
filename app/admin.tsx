@@ -2,7 +2,8 @@
  * Pantalla ADMINISTRAR (solo superadmin)
  * - Todos los usuarios, con sus grupos y la última vez que entraron
  * - Todos los grupos, con coaches, miembros y plan activo
- * - Ver el plan de cualquier grupo
+ * - Ver los planes de cualquier grupo o Individual (también los que no están activos)
+ *   y los ejercicios que creó ese grupo
  * - Blanquear la contraseña de un usuario
  * - Sumar a un usuario a un grupo o sacarlo
  */
@@ -15,7 +16,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Boton, Campo, Card, Insignia, pantalla, Texto, Titulo } from '../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../constants/theme';
 import { useSesion } from '../hooks/useSesion';
-import { api, Plan, resumenEjercicio, textoVence } from '../lib/api';
+import { api, Ejercicio, Plan, PlanResumen, resumenEjercicio, textoVence } from '../lib/api';
+
+// Lo que el admin ve de un grupo: el plan abierto, la lista de planes y sus ejercicios propios
+interface PlanesAdmin { plan: Plan | null; planes: PlanResumen[]; ejercicios: Ejercicio[] }
 
 interface UsuarioAdmin {
   id: number;
@@ -25,6 +29,7 @@ interface UsuarioAdmin {
   creado: string;
   ultima_entrada: string | null;
   grupos: string | null;
+  individual_id: number | null;
 }
 interface GrupoAdmin {
   id: number;
@@ -36,6 +41,8 @@ interface GrupoAdmin {
   coaches: string | null;
   plan: string | null;
   vence: string | null;
+  planes: number;
+  ejercicios: number;
 }
 
 interface Membresia { usuario_id: number; grupo_id: number; rol: 'coach' | 'miembro' }
@@ -66,8 +73,8 @@ export default function AdminScreen() {
   // Usuario al que se le está eligiendo un grupo para sumarlo
   const [sumando, setSumando] = useState<number | null>(null);
   const [error, setError] = useState('');
-  // Plan abierto de un grupo: undefined = cargando, null = no tiene
-  const [planAbierto, setPlanAbierto] = useState<{ grupoId: number; plan?: Plan | null } | null>(null);
+  // Planes abiertos de un grupo: datos undefined = cargando
+  const [planAbierto, setPlanAbierto] = useState<{ grupoId: number; datos?: PlanesAdmin } | null>(null);
   // Última contraseña temporal, para que quede a la vista y se pueda pasar
   const [temporal, setTemporal] = useState<{ nombre: string; email: string; password: string } | null>(null);
 
@@ -119,12 +126,12 @@ export default function AdminScreen() {
     }
   };
 
-  const verPlan = async (grupoId: number) => {
-    if (planAbierto?.grupoId === grupoId) return setPlanAbierto(null);
-    setPlanAbierto({ grupoId });
+  const verPlan = async (grupoId: number, planId?: number) => {
+    if (planAbierto?.grupoId === grupoId && !planId) return setPlanAbierto(null);
+    if (!planId) setPlanAbierto({ grupoId });
     try {
-      const data = await api<{ plan: Plan | null }>('admin_plan', { grupo_id: grupoId }, token);
-      setPlanAbierto({ grupoId, plan: data.plan });
+      const data = await api<PlanesAdmin>('admin_plan', { grupo_id: grupoId, ...(planId && { plan_id: planId }) }, token);
+      setPlanAbierto({ grupoId, datos: data });
     } catch (e: any) {
       setPlanAbierto(null);
       Alert.alert('No se pudo', e.message);
@@ -216,6 +223,17 @@ export default function AdminScreen() {
                       )}
                     </View>
                   )}
+                  {!!u.individual_id && (
+                    <Boton
+                      titulo={planAbierto?.grupoId === u.individual_id ? 'Ocultar su plan personal' : 'Ver su plan personal y ejercicios'}
+                      tipo="secundario"
+                      onPress={() => verPlan(u.individual_id!)}
+                      style={{ marginTop: Spacing.sm }}
+                    />
+                  )}
+                  {planAbierto && planAbierto.grupoId === u.individual_id && (
+                    <VistaPlanes datos={planAbierto.datos} onElegir={id => verPlan(u.individual_id!, id)} />
+                  )}
                   <Boton titulo="Blanquear contraseña" tipo="secundario" onPress={() => blanquear(u)} style={{ marginTop: Spacing.sm }} />
                 </Card>
               ))
@@ -230,36 +248,20 @@ export default function AdminScreen() {
                   <Text style={styles.detalle}>
                     {g.plan ? `Plan: ${g.plan}${g.vence ? ` · ${textoVence(g.vence)}` : ''}` : 'Sin plan activo'}
                   </Text>
+                  <Text style={styles.detalle}>
+                    {`${g.planes} ${g.planes === 1 ? 'plan armado' : 'planes armados'} · ${g.ejercicios} ${g.ejercicios === 1 ? 'ejercicio propio' : 'ejercicios propios'}`}
+                  </Text>
                   <Text style={styles.detalle}>{`Creado ${fecha(g.creado)}`}</Text>
-                  {!!g.plan && (
+                  {(g.planes > 0 || g.ejercicios > 0) && (
                     <Boton
-                      titulo={planAbierto?.grupoId === g.id ? 'Ocultar plan' : 'Ver plan'}
+                      titulo={planAbierto?.grupoId === g.id ? 'Ocultar' : 'Ver planes y ejercicios'}
                       tipo="secundario"
                       onPress={() => verPlan(g.id)}
                       style={{ marginTop: Spacing.sm }}
                     />
                   )}
                   {planAbierto?.grupoId === g.id && (
-                    planAbierto.plan === undefined ? (
-                      <Text style={styles.detalle}>Cargando…</Text>
-                    ) : !planAbierto.plan ? (
-                      <Text style={styles.detalle}>No tiene plan activo.</Text>
-                    ) : (
-                      <View style={{ marginTop: Spacing.sm }}>
-                        {planAbierto.plan.dias.map(d => (
-                          <View key={d.id} style={styles.dia}>
-                            <Text style={styles.diaNombre}>{d.nombre}</Text>
-                            {d.ejercicios.map(e => (
-                              <View key={e.plan_ejercicio_id} style={styles.ejercicio}>
-                                <Text style={styles.ejNombre}>{e.nombre}</Text>
-                                <Text style={styles.detalle}>{resumenEjercicio(e)}</Text>
-                                {!!e.nota && <Text style={styles.nota}>{e.nota}</Text>}
-                              </View>
-                            ))}
-                          </View>
-                        ))}
-                      </View>
-                    )
+                    <VistaPlanes datos={planAbierto.datos} onElegir={id => verPlan(g.id, id)} />
                   )}
                 </Card>
               ))}
@@ -271,7 +273,51 @@ export default function AdminScreen() {
   );
 }
 
+// Los planes de un grupo (solo lectura): se elige cuál ver, y abajo los ejercicios que creó
+function VistaPlanes({ datos, onElegir }: { datos?: PlanesAdmin; onElegir: (planId: number) => void }) {
+  if (!datos) return <Text style={styles.detalle}>Cargando…</Text>;
+  return (
+    <View style={{ marginTop: Spacing.sm }}>
+      {datos.planes.length === 0 ? (
+        <Text style={styles.detalle}>Todavía no armó ningún plan.</Text>
+      ) : (
+        <View style={styles.chips}>
+          {datos.planes.map(p => {
+            const abierto = datos.plan?.id === p.id;
+            return (
+              <TouchableOpacity key={p.id} style={[styles.chip, abierto && styles.chipActivo]} onPress={() => onElegir(p.id)}>
+                <Text style={[styles.chipTexto, abierto && { color: Colors.textInverse }]}>{`${p.nombre}${p.activo ? ' · en uso' : ''}`}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+      {datos.plan?.dias.map(d => (
+        <View key={d.id} style={styles.dia}>
+          <Text style={styles.diaNombre}>{d.nombre}</Text>
+          {d.ejercicios.map(e => (
+            <View key={e.plan_ejercicio_id} style={styles.ejercicio}>
+              <Text style={styles.ejNombre}>{e.nombre}</Text>
+              <Text style={styles.detalle}>{`${resumenEjercicio(e)} · ${e.musculo_principal}`}</Text>
+              {!!e.nota && <Text style={styles.nota}>{e.nota}</Text>}
+            </View>
+          ))}
+        </View>
+      ))}
+      <View style={styles.dia}>
+        <Text style={styles.diaNombre}>{`Ejercicios que creó (${datos.ejercicios.length})`}</Text>
+        {datos.ejercicios.length === 0 ? (
+          <Text style={styles.detalle}>Usa solo los del catálogo de CuerPro.</Text>
+        ) : datos.ejercicios.map(e => (
+          <Text key={e.id} style={styles.detalle}>{`${e.nombre} · ${e.musculo_principal}`}</Text>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  chipActivo: { backgroundColor: Colors.accent },
   encabezado: {
     flexDirection: 'row', alignItems: 'center', gap: Spacing.md, padding: Spacing.md,
     backgroundColor: Colors.bgCard, borderBottomWidth: 1, borderBottomColor: Colors.border,
