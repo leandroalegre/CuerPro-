@@ -388,6 +388,40 @@ async function sumarPuntos(usuarioId, grupoId, motivo, referencia, temporada = t
     [usuarioId, grupoId, temporada, motivo, PUNTOS[motivo], referencia]
   );
 }
+// Una serie tuya (con el día en que se anotó), para corregirla o borrarla
+async function serieMia(serieId, usuarioId) {
+  const [[serie]] = await pool.query(
+    `SELECT id, usuario_id, encuentro_id, grupo_id, ejercicio_id, DATE_FORMAT(created_at, '%Y-%m-%d') AS dia
+     FROM cuerpro_series WHERE id = ?`,
+    [serieId]
+  );
+  if (!serie || serie.usuario_id !== usuarioId) throw httpError(404, 'Serie no encontrada');
+  return serie;
+}
+
+// Después de corregir o borrar una serie, se recalcula el récord de ese ejercicio en ese día,
+// igual que al anotar: hay récord si alguna serie del día supera todas las anteriores
+// (la primera vez que hacés el ejercicio no cuenta)
+async function revisarRecord(usuarioId, serie) {
+  const [filas] = await pool.query(
+    `SELECT peso, DATE_FORMAT(created_at, '%Y-%m-%d') AS dia FROM cuerpro_series
+     WHERE usuario_id = ? AND ejercicio_id = ? AND DATE(created_at) <= ?
+     ORDER BY created_at, id`,
+    [usuarioId, serie.ejercicio_id, serie.dia]
+  );
+  let mejor = null;
+  let record = false;
+  for (const f of filas) {
+    const peso = Number(f.peso);
+    if (f.dia === serie.dia && mejor !== null && peso > mejor) record = true;
+    mejor = mejor === null ? peso : Math.max(mejor, peso);
+  }
+  const ref = `record:${serie.ejercicio_id}:${serie.dia}`;
+  if (record) await sumarPuntos(usuarioId, serie.grupo_id, 'record', ref, serie.dia.slice(0, 7));
+  else await quitarPuntos(usuarioId, 'record', ref);
+  return record;
+}
+
 async function quitarPuntos(usuarioId, motivo, referencia) {
   await pool.query(
     'DELETE FROM cuerpro_puntos WHERE usuario_id = ? AND motivo = ? AND referencia = ?',
@@ -931,7 +965,9 @@ const acciones = {
       `SELECT u.id, u.nombre, u.email, u.superadmin, DATE_FORMAT(u.created_at, '%Y-%m-%d') AS creado,
               (SELECT DATE_FORMAT(MAX(s.created_at), '%Y-%m-%d') FROM cuerpro_sesiones s WHERE s.usuario_id = u.id) AS ultima_entrada,
               (SELECT GROUP_CONCAT(g.nombre ORDER BY g.nombre SEPARATOR ', ') FROM cuerpro_miembros m
-               JOIN cuerpro_grupos g ON g.id = m.grupo_id WHERE m.usuario_id = u.id AND g.individual = 0) AS grupos
+               JOIN cuerpro_grupos g ON g.id = m.grupo_id WHERE m.usuario_id = u.id AND g.individual = 0) AS grupos,
+              (SELECT g.id FROM cuerpro_miembros m JOIN cuerpro_grupos g ON g.id = m.grupo_id
+               WHERE m.usuario_id = u.id AND g.individual = 1 LIMIT 1) AS individual_id
        FROM cuerpro_usuarios u ORDER BY u.nombre`
     );
     const [grupos] = await pool.query(
@@ -940,7 +976,9 @@ const acciones = {
               (SELECT GROUP_CONCAT(u.nombre ORDER BY u.nombre SEPARATOR ', ') FROM cuerpro_miembros m
                JOIN cuerpro_usuarios u ON u.id = m.usuario_id WHERE m.grupo_id = g.id AND m.rol = 'coach') AS coaches,
               (SELECT p.nombre FROM cuerpro_planes p WHERE p.grupo_id = g.id AND p.activo = 1 LIMIT 1) AS plan,
-              (SELECT DATE_FORMAT(p.vence, '%Y-%m-%d') FROM cuerpro_planes p WHERE p.grupo_id = g.id AND p.activo = 1 LIMIT 1) AS vence
+              (SELECT DATE_FORMAT(p.vence, '%Y-%m-%d') FROM cuerpro_planes p WHERE p.grupo_id = g.id AND p.activo = 1 LIMIT 1) AS vence,
+              (SELECT COUNT(*) FROM cuerpro_planes p WHERE p.grupo_id = g.id AND p.archivado = 0) AS planes,
+              (SELECT COUNT(*) FROM cuerpro_ejercicios e WHERE e.grupo_id = g.id) AS ejercicios
        FROM cuerpro_grupos g ORDER BY g.individual, g.nombre`
     );
     // Quién está en qué grupo (sin los Individual), para sumar o quitar desde Administrar
@@ -1250,11 +1288,21 @@ const acciones = {
     return planDelGrupo(grupoId, Number(getParam(req, 'plan_id')) || null);
   },
 
-  // El superadmin ve el plan de cualquier grupo (solo lectura)
+  // El superadmin ve los planes de cualquier grupo o Individual (solo lectura): el activo o
+  // el que pida con plan_id, la lista de todos (también los que armó y no activó) y los
+  // ejercicios que creó ese grupo para armar sus planes
   async admin_plan(req) {
     await superadmin(req);
     const [grupoId] = requireParams(req, 'grupo_id');
-    return planDelGrupo(grupoId, Number(getParam(req, 'plan_id')) || null);
+    let data = await planDelGrupo(grupoId, Number(getParam(req, 'plan_id')) || null);
+    // Sin plan activo, el primero que armó
+    if (!data.plan && data.planes.length) data = await planDelGrupo(grupoId, data.planes[0].id);
+    const [ejercicios] = await pool.query(
+      `SELECT id, grupo_id, nombre, musculo_principal, musculos_secundarios, equipo, movimiento
+       FROM cuerpro_ejercicios WHERE grupo_id = ? ORDER BY musculo_principal, nombre`,
+      [grupoId]
+    );
+    return { ...data, ejercicios };
   },
 
   // plan: {nombre, dias: [{nombre, ejercicios: [{ejercicio_id, series, repeticiones, peso_sugerido,
@@ -1546,6 +1594,95 @@ const acciones = {
       await sumarPuntos(usuario.id, grupoId, 'record', `record:${ejercicioId}:${dia}`, dia.slice(0, 7));
     }
     return { id: r.insertId, record, sumo };
+  },
+
+  // Las series de los ejercicios que estás haciendo: las que ya anotaste en este entrenamiento
+  // (así no se pierden si salís de la pantalla) y las de las últimas veces, para comparar.
+  // Con el grupo se manda encuentro_id; por tu cuenta, grupo_id y fecha (sin fecha, hoy).
+  async series_ejercicios(req) {
+    const usuario = await sesion(req);
+    const [idsParam] = requireParams(req, 'ejercicio_ids');
+    const ids = (Array.isArray(idsParam) ? idsParam : String(idsParam).split(','))
+      .map(Number).filter(n => n > 0).slice(0, 100);
+    if (!ids.length) return { actuales: {}, anteriores: {} };
+    const encuentroId = Number(getParam(req, 'encuentro_id')) || null;
+    const grupoId = Number(getParam(req, 'grupo_id')) || null;
+    const fecha = encuentroId ? null : fechaPasadaParam(getParam(req, 'fecha'));
+    const [[{ hoy }]] = await pool.query("SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS hoy");
+    const dia = fecha ?? hoy;
+
+    let actuales = [];
+    if (encuentroId) {
+      actuales = (await pool.query(
+        `SELECT id, ejercicio_id, numero, repeticiones, peso FROM cuerpro_series
+         WHERE usuario_id = ? AND encuentro_id = ? AND ejercicio_id IN (?) ORDER BY created_at, id`,
+        [usuario.id, encuentroId, ids]
+      ))[0];
+    } else if (grupoId) {
+      actuales = (await pool.query(
+        `SELECT id, ejercicio_id, numero, repeticiones, peso FROM cuerpro_series
+         WHERE usuario_id = ? AND grupo_id = ? AND encuentro_id IS NULL AND DATE(created_at) = ? AND ejercicio_id IN (?)
+         ORDER BY created_at, id`,
+        [usuario.id, grupoId, dia, ids]
+      ))[0];
+    }
+    const yaEstan = actuales.map(s => s.id);
+
+    // Las últimas 3 veces de cada ejercicio, antes de este entrenamiento (en cualquier grupo)
+    const [previas] = await pool.query(
+      `SELECT ejercicio_id, DATE_FORMAT(created_at, '%Y-%m-%d') AS fecha, repeticiones, peso
+       FROM cuerpro_series
+       WHERE usuario_id = ? AND ejercicio_id IN (?) AND DATE(created_at) <= ? AND id NOT IN (?)
+         AND created_at >= NOW() - INTERVAL 180 DAY
+       ORDER BY created_at DESC, id DESC`,
+      [usuario.id, ids, dia, yaEstan.length ? yaEstan : [0]]
+    );
+    const anteriores = {};
+    for (const s of previas) {
+      const lista = (anteriores[s.ejercicio_id] ??= []);
+      let vez = lista.find(v => v.fecha === s.fecha);
+      if (!vez) {
+        if (lista.length >= 3) continue;
+        vez = { fecha: s.fecha, series: [] };
+        lista.push(vez);
+      }
+      vez.series.unshift({ repeticiones: s.repeticiones, peso: Number(s.peso) });
+    }
+    const porEjercicio = {};
+    for (const s of actuales) (porEjercicio[s.ejercicio_id] ??= []).push({ ...s, peso: Number(s.peso) });
+    return { actuales: porEjercicio, anteriores };
+  },
+
+  // Corregir una serie que anotaste mal (por ejemplo, invertiste peso y repeticiones)
+  async serie_editar(req) {
+    const usuario = await sesion(req);
+    const [serieId, repeticiones] = requireParams(req, 'serie_id', 'repeticiones');
+    const reps = Math.round(Number(repeticiones));
+    const peso = Number(String(getParam(req, 'peso') ?? 0).replace(',', '.')) || 0;
+    if (!(reps > 0) || reps > 1000) throw httpError(400, 'Revisá las repeticiones');
+    if (peso < 0 || peso > 1000) throw httpError(400, 'Revisá el peso');
+    const serie = await serieMia(serieId, usuario.id);
+    await pool.query('UPDATE cuerpro_series SET repeticiones = ?, peso = ? WHERE id = ?', [reps, peso, serie.id]);
+    const record = await revisarRecord(usuario.id, serie);
+    return { record };
+  },
+
+  async serie_borrar(req) {
+    const usuario = await sesion(req);
+    const [serieId] = requireParams(req, 'serie_id');
+    const serie = await serieMia(serieId, usuario.id);
+    await pool.query('DELETE FROM cuerpro_series WHERE id = ?', [serie.id]);
+    await revisarRecord(usuario.id, serie);
+    // Por tu cuenta: si ya no llega a las 3 series, se quitan los 10 puntos de ese día
+    if (!serie.encuentro_id && serie.grupo_id) {
+      const [[{ series }]] = await pool.query(
+        `SELECT COUNT(*) AS series FROM cuerpro_series
+         WHERE usuario_id = ? AND grupo_id = ? AND encuentro_id IS NULL AND DATE(created_at) = ?`,
+        [usuario.id, serie.grupo_id, serie.dia]
+      );
+      if (series < SERIES_PARA_SUMAR) await quitarPuntos(usuario.id, 'por_su_cuenta', `cuenta:${serie.grupo_id}:${serie.dia}`);
+    }
+    return {};
   },
 
   // "Ya lo hice": marca un día del plan como hecho (hoy o uno anterior que te olvidaste
