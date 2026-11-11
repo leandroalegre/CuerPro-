@@ -16,6 +16,11 @@
  * - Cada serie se guarda al tocar "Guardar serie"; si salís y volvés, las anotadas siguen ahí
  * - Tocando una serie anotada se corrige (peso y repeticiones) o se borra
  * - En cada ejercicio, lo que hiciste las últimas veces
+ * - Después de cada serie arranca el descanso (el del plan o 1'30''), con −15/+15 y "Descanso" a mano;
+ *   los ejercicios por tiempo tienen su cuenta regresiva
+ * - Se puede saltar una serie o el ejercicio entero
+ * - "Máquina ocupada" deja elegir cualquier ejercicio del catálogo (solo para vos) y
+ *   "Agregar ejercicio" suma uno que no estaba en el plan
  */
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
@@ -24,6 +29,7 @@ import { Alert, Platform, StyleSheet, TouchableOpacity, Vibration, View } from '
 import { Text } from '../../components/Letra';
 import { NestableDraggableFlatList, NestableScrollContainer, ScaleDecorator } from 'react-native-draggable-flatlist';
 import { CambiarDiaEncuentro } from '../../components/CambiarDiaEncuentro';
+import { SelectorEjercicio } from '../../components/SelectorEjercicio';
 import { AvisoRecuperacion, colorRecuperacion } from '../../components/Recuperacion';
 import { Boton, Campo, Card, CardDestacada, Etiqueta, Insignia, pantalla, Texto, Titulo, Vacio } from '../../components/ui';
 import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
@@ -219,6 +225,7 @@ export default function EntrenarScreen() {
             key={corto ? `${corto.modo}-${corto.minutos}` : 'plan'}
             rutina={armar(encuentro.rutina).rutina}
             encuentroId={encuentro.id}
+            grupoId={encuentro.grupo_id}
             recuperacion={recuperacion.lista}
             onCambio={recargar}
           />
@@ -317,6 +324,7 @@ export default function EntrenarScreen() {
               key={`${dia.id}-${fecha ?? 'hoy'}-${corto ? `${corto.modo}-${corto.minutos}` : 'plan'}`}
               rutina={armar(dia.ejercicios).rutina}
               encuentroId={null}
+              grupoId={grupoPlan.id}
               recuperacion={haceDias ? [] : recuperacion.lista}
               cuenta={{ grupoId: grupoPlan.id, diaId: dia.id, nombre: grupoPlan.individual ? null : grupoPlan.nombre, fecha }}
               onCambio={() => {}}
@@ -363,25 +371,60 @@ function Modo({ texto, activo, onPress }: { texto: string; activo: boolean; onPr
 interface Cuenta { grupoId: number; diaId: number; nombre: string | null; fecha?: string | null }
 
 function ListaRutina({
-  rutina,
+  rutina: rutinaPlan,
   encuentroId,
+  grupoId,
   cuenta,
   recuperacion,
   onCambio,
 }: {
   rutina: EjercicioRutina[];
   encuentroId: number | null;
+  grupoId: number;
   cuenta?: Cuenta;
   recuperacion: Recuperacion[];
   onCambio: () => void;
 }) {
   const { token } = useSesion();
   const [orden, setOrden] = useState<number[]>([]);
+
+  // Ejercicios que agregaste hoy (no estaban en el plan) y los que cambiaste por otro del
+  // catálogo porque la máquina no se desocupaba. Son solo para vos y para este entrenamiento.
+  const [extras, setExtras] = useState<EjercicioRutina[]>([]);
+  const [otros, setOtros] = useState<Record<number, Ejercicio>>({});
+  const rutina = [...rutinaPlan, ...extras];
   const porId = new Map(rutina.map(e => [e.plan_ejercicio_id, e]));
+  // El selector abierto: para cambiar un ejercicio (su plan_ejercicio_id) o para agregar uno
+  const [eligiendo, setEligiendo] = useState<{ para: number | 'nuevo'; sugerir?: Ejercicio } | null>(null);
+  const [catalogo, setCatalogo] = useState<Ejercicio[]>([]);
+  const abrirSelector = async (para: number | 'nuevo') => {
+    const base = para === 'nuevo' ? undefined : porId.get(para);
+    setEligiendo({ para, sugerir: base && { id: base.ejercicio_id, grupo_id: null, nombre: base.nombre, musculo_principal: base.musculo_principal, musculos_secundarios: '', equipo: base.equipo, movimiento: '' } });
+    if (catalogo.length || !token) return;
+    try {
+      setCatalogo((await api<{ ejercicios: Ejercicio[] }>('ejercicios', { grupo_id: grupoId }, token)).ejercicios);
+    } catch {}
+  };
+  const elegido = (e: Ejercicio) => {
+    if (!eligiendo) return;
+    if (eligiendo.para === 'nuevo') {
+      setExtras([...extras, {
+        plan_ejercicio_id: -Date.now(), ejercicio_id: e.id, nombre: e.nombre, musculo_principal: e.musculo_principal,
+        equipo: e.equipo, series: 3, repeticiones: '10', peso_sugerido: null, carga: null,
+        descanso_seg: null, nota: null, union_siguiente: null, alternativas: [], cambio: null,
+      }]);
+    } else {
+      setOtros({ ...otros, [eligiendo.para]: e });
+    }
+    setEligiendo(null);
+  };
 
   // Las series ya anotadas en este entrenamiento y las de las últimas veces
   const [series, setSeries] = useState<SeriesEjercicios | null>(null);
-  const ids = [...new Set(rutina.flatMap(e => [e.ejercicio_id, ...(e.cambio ? [e.cambio.ejercicio_id] : []), ...e.alternativas.map(a => a.ejercicio_id)]))];
+  const ids = [...new Set([
+    ...rutina.flatMap(e => [e.ejercicio_id, ...(e.cambio ? [e.cambio.ejercicio_id] : []), ...e.alternativas.map(a => a.ejercicio_id)]),
+    ...Object.values(otros).map(e => e.id),
+  ])];
   const claveIds = ids.join(',');
   useEffect(() => {
     if (!token || !ids.length) return;
@@ -401,6 +444,7 @@ function ListaRutina({
   ];
 
   return (
+    <>
     <NestableDraggableFlatList
       data={datos}
       keyExtractor={e => String(e.plan_ejercicio_id)}
@@ -415,6 +459,10 @@ function ListaRutina({
             encuentroId={encuentroId}
             cuenta={cuenta}
             series={series}
+            otro={otros[item.plan_ejercicio_id] ?? null}
+            onElegirOtro={() => abrirSelector(item.plan_ejercicio_id)}
+            onVolverAlPlan={() => { const { [item.plan_ejercicio_id]: _, ...resto } = otros; setOtros(resto); }}
+            onQuitar={item.plan_ejercicio_id < 0 ? () => setExtras(extras.filter(x => x.plan_ejercicio_id !== item.plan_ejercicio_id)) : undefined}
             recuperacion={recuperacion.find(r => r.musculo === item.musculo_principal) ?? null}
             onCambio={onCambio}
             drag={drag}
@@ -424,6 +472,19 @@ function ListaRutina({
         </ScaleDecorator>
       )}
     />
+    <TouchableOpacity style={styles.agregar} onPress={() => abrirSelector('nuevo')}>
+      <Ionicons name="add-circle-outline" size={20} color={Colors.accent} />
+      <Text style={styles.agregarTexto}>Agregar un ejercicio</Text>
+    </TouchableOpacity>
+    <SelectorEjercicio
+      visible={!!eligiendo}
+      titulo={eligiendo?.para === 'nuevo' ? 'Agregar un ejercicio' : 'Cambiar por otro ejercicio'}
+      ejercicios={catalogo}
+      sugerir={eligiendo?.sugerir ?? null}
+      onElegir={elegido}
+      onCerrar={() => setEligiendo(null)}
+    />
+    </>
   );
 }
 
@@ -432,6 +493,10 @@ function EjercicioCard({
   encuentroId,
   cuenta,
   series,
+  otro,
+  onElegirOtro,
+  onVolverAlPlan,
+  onQuitar,
   recuperacion,
   onCambio,
   drag,
@@ -442,6 +507,10 @@ function EjercicioCard({
   encuentroId: number | null; // null: por mi cuenta
   cuenta?: Cuenta;
   series: SeriesEjercicios | null; // null: cargando
+  otro: Ejercicio | null; // lo cambiaste por otro del catálogo (solo para vos)
+  onElegirOtro: () => void;
+  onVolverAlPlan: () => void;
+  onQuitar?: () => void; // los que agregaste hoy se pueden sacar
   recuperacion: Recuperacion | null; // null: el músculo está al 100%
   onCambio: () => void;
   drag: () => void;
@@ -460,12 +529,17 @@ function EjercicioCard({
   const [finDescanso, setFinDescanso] = useState<number | null>(null);
   const [saltado, setSaltado] = useState(false); // no se hace hoy: queda chiquito, se puede deshacer
   const porTiempo = esPorTiempo(ej.repeticiones);
+  const descanso = ej.descanso_seg || DESCANSO_POR_DEFECTO;
 
   // Por mi cuenta, la alternativa es solo para vos y no se guarda
   const [cambioPropio, setCambioPropio] = useState<number | null>(null);
   const propia = ej.alternativas.find(a => a.ejercicio_id === cambioPropio);
 
-  const actual = propia ?? ej.cambio ?? { ejercicio_id: ej.ejercicio_id, nombre: ej.nombre, equipo: ej.equipo };
+  const actual = otro
+    ? { ejercicio_id: otro.id, nombre: otro.nombre, equipo: otro.equipo }
+    : propia ?? ej.cambio ?? { ejercicio_id: ej.ejercicio_id, nombre: ej.nombre, equipo: ej.equipo };
+  const extra = ej.plan_ejercicio_id < 0;
+  const anotadas = hechas.filter(h => !h.saltada).length;
   const anteriores = series?.anteriores[actual.ejercicio_id] ?? [];
 
   // Cuando llegan del servidor: las series que ya anotaste hoy (si saliste y volviste)
@@ -519,7 +593,8 @@ function EjercicioCard({
       }, token);
       setHechas([...hechas, { id: data.id, reps: r, peso: p, record: data.record }]);
       // En superserie o circuito se pasa directo al siguiente; el descanso va al final de la vuelta
-      if (ej.descanso_seg && !ej.union_siguiente && hechas.length + 1 < ej.series) setFinDescanso(Date.now() + ej.descanso_seg * 1000);
+      // Descanso después de cada serie (el del plan o 1'30''), salvo en superserie o circuito
+      if (!ej.union_siguiente) setFinDescanso(Date.now() + descanso * 1000);
       if (data.record) avisar('¡Récord personal!', `Sumaste 15 puntos con ${p} kg.`);
       else if (data.sumo) avisar('¡Entrenamiento sumado!', cuenta?.nombre ? `Sumaste 10 puntos en ${cuenta.nombre}, como si hubieras ido.` : 'Sumaste 10 puntos.');
     } catch (e: any) {
@@ -566,7 +641,7 @@ function EjercicioCard({
           </TouchableOpacity>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={styles.saltadoNombre}>{actual.nombre}</Text>
-            <Text style={styles.saltadoTexto}>{hechas.length ? `Saltado después de ${hechas.length} ${hechas.length === 1 ? 'serie' : 'series'}` : 'Saltado hoy'}</Text>
+            <Text style={styles.saltadoTexto}>{anotadas ? `Saltado después de ${anotadas} ${anotadas === 1 ? 'serie' : 'series'}` : 'Saltado hoy'}</Text>
           </View>
           <TouchableOpacity onPress={() => setSaltado(false)} hitSlop={8} style={styles.botonChico}>
             <Text style={styles.botonChicoTexto}>Deshacer</Text>
@@ -596,7 +671,11 @@ function EjercicioCard({
           </TouchableOpacity>
         )}
       </View>
-      {propia ? (
+      {extra ? (
+        <Texto muted>Agregado hoy, no está en el plan</Texto>
+      ) : otro ? (
+        <Texto muted>{`En lugar de ${ej.nombre} (solo para vos)`}</Texto>
+      ) : propia ? (
         <Texto muted>{`En lugar de ${ej.nombre}`}</Texto>
       ) : ej.cambio && <Texto muted>{`En lugar de ${ej.nombre} (lo cambió ${ej.cambio.elegido_por})`}</Texto>}
       <Texto muted>{`${resumenEjercicio(ej)} · ${ej.musculo_principal}`}</Texto>
@@ -630,7 +709,13 @@ function EjercicioCard({
       )}
 
       {!porTiempo && hechas.map((s, i) => (
-        editando === i ? (
+        s.saltada ? (
+          <TouchableOpacity key={`saltada-${i}`} onPress={() => setHechas(hechas.filter((_, j) => j !== i))} style={styles.filaSerie} accessibilityLabel={`Deshacer saltar serie ${i + 1}`}>
+            <Ionicons name="play-skip-forward" size={16} color={Colors.textMuted} />
+            <Text style={styles.serieSaltada}>{`Serie ${i + 1}: saltada`}</Text>
+            <Text style={[styles.ayuda, { marginLeft: 'auto', marginTop: 0 }]}>Deshacer</Text>
+          </TouchableOpacity>
+        ) : editando === i ? (
           <EditarSerie key={s.id ?? i} numero={i + 1} serie={s} onGuardar={(r, p) => corregir(i, r, p)} onBorrar={() => borrar(i)} onCancelar={() => setEditando(null)} />
         ) : (
           <TouchableOpacity key={s.id ?? i} onPress={() => s.id && setEditando(i)} style={styles.filaSerie} accessibilityLabel={`Corregir serie ${i + 1}`}>
@@ -644,13 +729,22 @@ function EjercicioCard({
         <Text style={styles.ayuda}>Guardadas. Tocá una serie para corregirla.</Text>
       )}
 
-      {finDescanso && <Descanso fin={finDescanso} onTerminar={() => setFinDescanso(null)} />}
+      {finDescanso && (
+        <Descanso
+          fin={finDescanso}
+          onTerminar={() => setFinDescanso(null)}
+          onAjustar={seg => setFinDescanso(f => (f ? Math.max(Date.now() + 1000, f + seg * 1000) : f))}
+        />
+      )}
 
       {porTiempo && (
         hechas.length ? (
           <Text style={styles.serie}>Hecho ✓</Text>
         ) : (
-          <Boton titulo="Listo" tipo="secundario" onPress={() => setHechas([{ reps: 0, peso: 0, record: false }])} style={{ marginTop: Spacing.md }} />
+          <CuentaRegresiva
+            segundos={segundosDe(ej.repeticiones)}
+            onListo={() => setHechas([{ reps: 0, peso: 0, record: false }])}
+          />
         )
       )}
 
@@ -668,10 +762,22 @@ function EjercicioCard({
             </View>
           </View>
           <Boton titulo={`Guardar serie ${hechas.length + 1} de ${ej.series}`} onPress={guardarSerie} cargando={guardando} style={{ marginTop: Spacing.sm }} />
+          <View style={styles.acciones}>
+            <TouchableOpacity onPress={() => setHechas([...hechas, { reps: 0, peso: 0, record: false, saltada: true }])} hitSlop={8} style={styles.botonChico}>
+              <Text style={styles.botonChicoTexto}>{`Saltar serie ${hechas.length + 1}`}</Text>
+            </TouchableOpacity>
+            {!finDescanso && (
+              <TouchableOpacity onPress={() => setFinDescanso(Date.now() + descanso * 1000)} hitSlop={8} style={styles.botonChico}>
+                <Text style={styles.botonChicoTexto}>{`⏱ Descanso ${textoTiempo(descanso)}`}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </>
       )}
 
-      {(ej.alternativas.length > 0 || ej.cambio) && (
+      {extra ? (
+        <Boton titulo="Quitar este ejercicio" tipo="secundario" onPress={onQuitar ?? (() => {})} style={{ marginTop: Spacing.sm }} />
+      ) : (
         <Boton
           titulo={verAlternativas ? 'Cerrar' : 'Máquina ocupada'}
           tipo="secundario"
@@ -681,22 +787,77 @@ function EjercicioCard({
       )}
       {verAlternativas && (
         <View style={{ marginTop: Spacing.sm, gap: Spacing.sm }}>
-          <Texto muted>{encuentroId === null ? 'El cambio es solo para vos.' : 'El cambio vale para todo el grupo.'}</Texto>
-          {actual.ejercicio_id !== ej.ejercicio_id && (
-            <Boton titulo={`Volver a ${ej.nombre}`} tipo="secundario" onPress={() => elegir(ej.ejercicio_id)} />
+          {otro ? (
+            <Boton titulo={`Volver a ${propia?.nombre ?? ej.cambio?.nombre ?? ej.nombre}`} tipo="secundario" onPress={() => { onVolverAlPlan(); setVerAlternativas(false); }} />
+          ) : (
+            <>
+              {(ej.alternativas.length > 0 || !!ej.cambio) && (
+                <Texto muted>{encuentroId === null ? 'Alternativas del plan (el cambio es solo para vos):' : 'Alternativas del plan (el cambio vale para todo el grupo):'}</Texto>
+              )}
+              {actual.ejercicio_id !== ej.ejercicio_id && (
+                <Boton titulo={`Volver a ${ej.nombre}`} tipo="secundario" onPress={() => elegir(ej.ejercicio_id)} />
+              )}
+              {ej.alternativas
+                .filter(a => a.ejercicio_id !== actual.ejercicio_id)
+                .map(a => (
+                  <Boton key={a.ejercicio_id} titulo={`${a.nombre} (${EQUIPO[a.equipo] ?? a.equipo})`} tipo="secundario" onPress={() => elegir(a.ejercicio_id)} />
+                ))}
+            </>
           )}
-          {ej.alternativas
-            .filter(a => a.ejercicio_id !== actual.ejercicio_id)
-            .map(a => (
-              <Boton key={a.ejercicio_id} titulo={`${a.nombre} (${EQUIPO[a.equipo] ?? a.equipo})`} tipo="secundario" onPress={() => elegir(a.ejercicio_id)} />
-            ))}
+          <Boton titulo="Elegir otro ejercicio…" tipo="secundario" onPress={() => { onElegirOtro(); setVerAlternativas(false); }} />
+          <Texto muted>Si elegís otro, el cambio es solo para vos y para hoy.</Texto>
         </View>
       )}
     </Card>
   );
 }
 
-interface Hecha { id?: number; reps: number; peso: number; record: boolean }
+interface Hecha { id?: number; reps: number; peso: number; record: boolean; saltada?: boolean }
+
+const DESCANSO_POR_DEFECTO = 90; // segundos, si el plan no dice
+
+// 90 → "1:30"
+function textoTiempo(seg: number) {
+  return `${Math.floor(seg / 60)}:${String(seg % 60).padStart(2, '0')}`;
+}
+
+// "6 min" → 360, "45''" o "45 seg" → 45, "1'30''" → 90
+function segundosDe(repeticiones: string) {
+  const t = repeticiones.toLowerCase();
+  const m = t.match(/(\d+(?:[.,]\d+)?)\s*(?:min|')(?!')/);
+  const sg = t.match(/(\d+)\s*(?:seg|s\b|'')/);
+  const total = (m ? Number(m[1].replace(',', '.')) * 60 : 0) + (sg ? Number(sg[1]) : 0);
+  return Math.round(total) || 60;
+}
+
+// Cuenta regresiva de un ejercicio por tiempo: Empezar, Pausa, y al terminar vibra y queda hecho
+function CuentaRegresiva({ segundos, onListo }: { segundos: number; onListo: () => void }) {
+  const [quedan, setQuedan] = useState(segundos);
+  const [corriendo, setCorriendo] = useState(false);
+  useEffect(() => {
+    if (!corriendo) return;
+    const t = setInterval(() => setQuedan(q => Math.max(0, q - 1)), 1000);
+    return () => clearInterval(t);
+  }, [corriendo]);
+  useEffect(() => {
+    if (quedan > 0 || !corriendo) return;
+    if (Platform.OS !== 'web') Vibration.vibrate([0, 400, 200, 400]);
+    onListo();
+  }, [quedan, corriendo]);
+  return (
+    <View style={styles.descanso}>
+      <Text style={styles.descansoTexto}>{textoTiempo(quedan)}</Text>
+      <View style={styles.acciones}>
+        <TouchableOpacity onPress={() => setCorriendo(!corriendo)} style={styles.botonChico}>
+          <Text style={styles.botonChicoTexto}>{corriendo ? 'Pausa' : quedan < segundos ? 'Seguir' : '▶ Empezar'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onListo} style={styles.botonChico}>
+          <Text style={styles.botonChicoTexto}>Listo</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
 interface SeriesEjercicios {
   // Por ejercicio: lo anotado en este entrenamiento
   actuales: Record<number, { id: number; numero: number; repeticiones: number; peso: number }[]>;
@@ -765,7 +926,7 @@ function EditarSerie({ numero, serie, onGuardar, onBorrar, onCancelar }: {
 }
 
 // Cuenta regresiva del descanso entre series; vibra al terminar
-function Descanso({ fin, onTerminar }: { fin: number; onTerminar: () => void }) {
+function Descanso({ fin, onTerminar, onAjustar }: { fin: number; onTerminar: () => void; onAjustar: (seg: number) => void }) {
   const [ahora, setAhora] = useState(Date.now());
   const quedan = Math.max(0, Math.ceil((fin - ahora) / 1000));
 
@@ -782,10 +943,18 @@ function Descanso({ fin, onTerminar }: { fin: number; onTerminar: () => void }) 
 
   return (
     <View style={styles.descanso}>
-      <Text style={styles.descansoTexto}>{`Descanso ${Math.floor(quedan / 60)}:${String(quedan % 60).padStart(2, '0')}`}</Text>
-      <TouchableOpacity onPress={onTerminar}>
-        <Text style={styles.saltar}>Saltar</Text>
-      </TouchableOpacity>
+      <Text style={styles.descansoTexto}>{`Descanso ${textoTiempo(quedan)}`}</Text>
+      <View style={styles.acciones}>
+        <TouchableOpacity onPress={() => onAjustar(-15)} hitSlop={6} style={styles.botonChico} accessibilityLabel="15 segundos menos">
+          <Text style={styles.botonChicoTexto}>−15</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => onAjustar(15)} hitSlop={6} style={styles.botonChico} accessibilityLabel="15 segundos más">
+          <Text style={styles.botonChicoTexto}>+15</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onTerminar} hitSlop={6}>
+          <Text style={styles.saltar}>Saltar</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -830,6 +999,13 @@ const styles = StyleSheet.create({
   campo: { marginBottom: 0, textAlign: 'center', fontWeight: '700' },
   por: { ...Typography.titleMd, color: Colors.textMuted, paddingBottom: 12 },
   serie: { ...Typography.body, color: Colors.success },
+  serieSaltada: { ...Typography.body, color: Colors.textMuted, textDecorationLine: 'line-through' },
+  acciones: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.sm },
+  agregar: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: Spacing.md,
+    paddingVertical: 12, borderRadius: Radius.lg, borderWidth: 1, borderStyle: 'dashed', borderColor: Colors.accent,
+  },
+  agregarTexto: { ...Typography.body, color: Colors.accent, fontWeight: '600' },
   filaSerie: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6 },
   ayuda: { ...Typography.caption, color: Colors.textMuted, marginTop: 2 },
   editar: { marginTop: Spacing.xs, padding: Spacing.sm, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.accent },
