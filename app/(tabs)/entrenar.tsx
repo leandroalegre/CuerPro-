@@ -19,8 +19,9 @@
  * - Después de cada serie arranca el descanso (el del plan o 1'30''), con −15/+15 y "Descanso" a mano;
  *   los ejercicios por tiempo tienen su cuenta regresiva
  * - Se puede saltar una serie o el ejercicio entero
- * - "Máquina ocupada" deja elegir cualquier ejercicio del catálogo (solo para vos) y
- *   "Agregar ejercicio" suma uno que no estaba en el plan
+ * - "Máquina ocupada" (botón chico, lo normal es hacer el del plan) deja elegir cualquier ejercicio
+ *   del catálogo (solo para vos) y "Agregar ejercicio" suma uno que no estaba en el plan
+ * - Arriba de la rutina, la entrada en calor según lo que se entrena ese día, con su cuenta regresiva
  */
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
@@ -37,7 +38,7 @@ import { useEncuentro } from '../../hooks/useEncuentro';
 import { useRecuperacion } from '../../hooks/useRecuperacion';
 import { useSesion } from '../../hooks/useSesion';
 import { aerobico, loMasAbandonado, MINUTOS, minutosTotal, ModoCorto, MODOS_CORTOS, versionCorta } from '../../lib/pocoTiempo';
-import { api, Ejercicio, EjercicioRutina, EQUIPO, esPorTiempo, fechaHaceDias, Plan, Recuperacion, resumenEjercicio } from '../../lib/api';
+import { api, Ejercicio, EjercicioRutina, EQUIPO, esPorTiempo, fechaHaceDias, Plan, Recuperacion, resumenEjercicio, zonaDe } from '../../lib/api';
 
 export default function EntrenarScreen() {
   const { token, grupo, grupos } = useSesion();
@@ -445,6 +446,7 @@ function ListaRutina({
 
   return (
     <>
+    <EntradaEnCalor rutina={rutinaPlan} />
     <NestableDraggableFlatList
       data={datos}
       keyExtractor={e => String(e.plan_ejercicio_id)}
@@ -762,29 +764,31 @@ function EjercicioCard({
             </View>
           </View>
           <Boton titulo={`Guardar serie ${hechas.length + 1} de ${ej.series}`} onPress={guardarSerie} cargando={guardando} style={{ marginTop: Spacing.sm }} />
-          <View style={styles.acciones}>
-            <TouchableOpacity onPress={() => setHechas([...hechas, { reps: 0, peso: 0, record: false, saltada: true }])} hitSlop={8} style={styles.botonChico}>
-              <Text style={styles.botonChicoTexto}>{`Saltar serie ${hechas.length + 1}`}</Text>
-            </TouchableOpacity>
-            {!finDescanso && (
-              <TouchableOpacity onPress={() => setFinDescanso(Date.now() + descanso * 1000)} hitSlop={8} style={styles.botonChico}>
-                <Text style={styles.botonChicoTexto}>{`⏱ Descanso ${textoTiempo(descanso)}`}</Text>
-              </TouchableOpacity>
-            )}
-          </View>
         </>
       )}
 
-      {extra ? (
-        <Boton titulo="Quitar este ejercicio" tipo="secundario" onPress={onQuitar ?? (() => {})} style={{ marginTop: Spacing.sm }} />
-      ) : (
-        <Boton
-          titulo={verAlternativas ? 'Cerrar' : 'Máquina ocupada'}
-          tipo="secundario"
-          onPress={() => setVerAlternativas(!verAlternativas)}
-          style={{ marginTop: Spacing.sm }}
-        />
-      )}
+      {/* Acciones chicas: lo normal es hacer el ejercicio del plan tal cual */}
+      <View style={styles.acciones}>
+        {!porTiempo && hechas.length < ej.series && (
+          <TouchableOpacity onPress={() => setHechas([...hechas, { reps: 0, peso: 0, record: false, saltada: true }])} hitSlop={8} style={styles.botonChico}>
+            <Text style={styles.botonChicoTexto}>{`Saltar serie ${hechas.length + 1}`}</Text>
+          </TouchableOpacity>
+        )}
+        {!porTiempo && hechas.length < ej.series && !finDescanso && (
+          <TouchableOpacity onPress={() => setFinDescanso(Date.now() + descanso * 1000)} hitSlop={8} style={styles.botonChico}>
+            <Text style={styles.botonChicoTexto}>{`⏱ Descanso ${textoTiempo(descanso)}`}</Text>
+          </TouchableOpacity>
+        )}
+        {extra ? (
+          <TouchableOpacity onPress={onQuitar} hitSlop={8} style={styles.botonChico}>
+            <Text style={styles.botonChicoTexto}>Quitar este ejercicio</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity onPress={() => setVerAlternativas(!verAlternativas)} hitSlop={8} style={styles.botonChico}>
+            <Text style={styles.botonChicoTexto}>{verAlternativas ? 'Cerrar' : 'Máquina ocupada'}</Text>
+          </TouchableOpacity>
+        )}
+      </View>
       {verAlternativas && (
         <View style={{ marginTop: Spacing.sm, gap: Spacing.sm }}>
           {otro ? (
@@ -831,9 +835,10 @@ function segundosDe(repeticiones: string) {
 }
 
 // Cuenta regresiva de un ejercicio por tiempo: Empezar, Pausa, y al terminar vibra y queda hecho
-function CuentaRegresiva({ segundos, onListo }: { segundos: number; onListo: () => void }) {
+function CuentaRegresiva({ segundos, onListo, textoListo = 'Listo' }: { segundos: number; onListo: () => void; textoListo?: string }) {
   const [quedan, setQuedan] = useState(segundos);
   const [corriendo, setCorriendo] = useState(false);
+  useEffect(() => setQuedan(segundos), [segundos]);
   useEffect(() => {
     if (!corriendo) return;
     const t = setInterval(() => setQuedan(q => Math.max(0, q - 1)), 1000);
@@ -844,18 +849,101 @@ function CuentaRegresiva({ segundos, onListo }: { segundos: number; onListo: () 
     if (Platform.OS !== 'web') Vibration.vibrate([0, 400, 200, 400]);
     onListo();
   }, [quedan, corriendo]);
+  // Sin arrancar: el botón grande es Empezar
+  if (!corriendo && quedan === segundos) {
+    return (
+      <View style={{ marginTop: Spacing.md, gap: Spacing.sm }}>
+        <Boton titulo={`▶ Empezar ${textoTiempo(segundos)}`} onPress={() => setCorriendo(true)} />
+        <TouchableOpacity onPress={onListo} hitSlop={8} style={{ alignSelf: 'center' }}>
+          <Text style={styles.botonChicoTexto}>{`Ya lo hice (${textoListo.toLowerCase()})`}</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
   return (
     <View style={styles.descanso}>
       <Text style={styles.descansoTexto}>{textoTiempo(quedan)}</Text>
-      <View style={styles.acciones}>
+      <View style={[styles.acciones, { marginTop: 0 }]}>
         <TouchableOpacity onPress={() => setCorriendo(!corriendo)} style={styles.botonChico}>
-          <Text style={styles.botonChicoTexto}>{corriendo ? 'Pausa' : quedan < segundos ? 'Seguir' : '▶ Empezar'}</Text>
+          <Text style={styles.botonChicoTexto}>{corriendo ? 'Pausa' : 'Seguir'}</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={onListo} style={styles.botonChico}>
-          <Text style={styles.botonChicoTexto}>Listo</Text>
+          <Text style={styles.botonChicoTexto}>{textoListo}</Text>
         </TouchableOpacity>
       </View>
     </View>
+  );
+}
+
+// Qué hacer para entrar en calor según lo que se entrena ese día
+const CALOR_POR_ZONA: Record<string, string> = {
+  piernas: 'Sentadillas sin peso ×15, zancadas ×10 por pierna y círculos de cadera',
+  espalda: 'Remo con banda o polea liviana ×15 y colgarse de la barra 20 segundos',
+  pecho: 'Flexiones de brazos ×10 y aperturas con banda ×15',
+  hombros: 'Círculos de brazos, rotaciones con banda ×15 y elevaciones sin peso',
+  brazos: 'Curl y extensión de tríceps livianos ×15',
+  abdominales: 'Plancha 20 segundos y movilidad de columna (gato-camello)',
+};
+
+// Entrada en calor arriba de la rutina: cardio suave, movilidad de lo que toca y una serie liviana.
+// Primero se elige con o sin; es solo una guía y después queda chiquita.
+function EntradaEnCalor({ rutina }: { rutina: EjercicioRutina[] }) {
+  const [minutos, setMinutos] = useState(5);
+  // Primero se elige si se hace o no
+  const [estado, setEstado] = useState<'elegir' | 'pendiente' | 'hecha' | 'saltada'>('elegir');
+  if (!rutina.length) return null;
+  const zonas = [...new Set(rutina.map(e => zonaDe(e.musculo_principal)?.zona).filter((z): z is string => !!z && !!CALOR_POR_ZONA[z]))];
+  const primero = rutina.find(e => !esPorTiempo(e.repeticiones));
+  if (estado === 'elegir') {
+    return (
+      <Card>
+        <View style={styles.cabecera}>
+          <Ionicons name="flame-outline" size={22} color={Colors.accent} />
+          <View style={{ flex: 1, minWidth: 0 }}><Titulo>¿Arrancás con entrada en calor?</Titulo></View>
+        </View>
+        <View style={[styles.fila, { marginTop: Spacing.sm }]}>
+          <Boton titulo="Con entrada en calor" onPress={() => setEstado('pendiente')} style={{ flex: 1 }} />
+          <Boton titulo="Sin" tipo="secundario" onPress={() => setEstado('saltada')} style={{ flex: 1 }} />
+        </View>
+      </Card>
+    );
+  }
+  if (estado !== 'pendiente') {
+    return (
+      <TouchableOpacity onPress={() => setEstado('pendiente')} style={[styles.filaSerie, { marginBottom: Spacing.sm }]}>
+        <Ionicons name={estado === 'hecha' ? 'checkmark-circle' : 'play-skip-forward'} size={18} color={estado === 'hecha' ? Colors.success : Colors.textMuted} />
+        <Text style={estado === 'hecha' ? styles.serie : styles.serieSaltada}>Entrada en calor</Text>
+        <Text style={[styles.ayuda, { marginLeft: 'auto', marginTop: 0 }]}>Ver</Text>
+      </TouchableOpacity>
+    );
+  }
+  return (
+    <Card>
+      <View style={styles.cabecera}>
+        <Ionicons name="flame-outline" size={22} color={Colors.accent} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Titulo>Entrada en calor</Titulo>
+        </View>
+        <TouchableOpacity onPress={() => setEstado('saltada')} hitSlop={8} style={[styles.botonChico, { marginBottom: Spacing.sm }]}>
+          <Text style={styles.botonChicoTexto}>Saltar</Text>
+        </TouchableOpacity>
+      </View>
+      <Text style={styles.calorPaso}>{`1. ${minutos} min de cardio suave: bici, cinta o elíptico`}</Text>
+      {zonas.map((z, i) => (
+        <Text key={z} style={styles.calorPaso}>{`${i + 2}. ${CALOR_POR_ZONA[z]}`}</Text>
+      ))}
+      {primero && (
+        <Text style={styles.calorPaso}>{`${zonas.length + 2}. Una serie liviana de ${primero.nombre} (la mitad del peso) ×12`}</Text>
+      )}
+      <View style={styles.acciones}>
+        {[5, 10].map(n => (
+          <TouchableOpacity key={n} onPress={() => setMinutos(n)} style={[styles.botonChico, minutos === n && { backgroundColor: Colors.accent }]}>
+            <Text style={[styles.botonChicoTexto, minutos === n && { color: Colors.textInverse }]}>{`${n} min`}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <CuentaRegresiva segundos={minutos * 60} onListo={() => setEstado('hecha')} textoListo="Terminé" />
+    </Card>
   );
 }
 interface SeriesEjercicios {
@@ -1005,6 +1093,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: Spacing.md,
     paddingVertical: 12, borderRadius: Radius.lg, borderWidth: 1, borderStyle: 'dashed', borderColor: Colors.accent,
   },
+  calorPaso: { ...Typography.body, color: Colors.textPrimary, marginTop: Spacing.xs },
   agregarTexto: { ...Typography.body, color: Colors.accent, fontWeight: '600' },
   filaSerie: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6 },
   ayuda: { ...Typography.caption, color: Colors.textMuted, marginTop: 2 },
