@@ -218,7 +218,14 @@ export default function EntrenarScreen() {
             </Text>
             <AvisoRecuperacion lista={recuperacion.deEjercicios(armar(encuentro.rutina).rutina)} />
             {grupo?.rol === 'coach' && encuentro.dia && !corto && (
-              <CambiarDiaEncuentro encuentroId={encuentro.id} diaId={encuentro.dia.id} onCambio={recargar} />
+              <CambiarDiaEncuentro directo encuentroId={encuentro.id} diaId={encuentro.dia.id} onCambio={recargar} />
+            )}
+            {grupo?.rol !== 'coach' && !corto && (
+              <TouchableOpacity onPress={() => setSolo(true)} style={{ marginTop: Spacing.sm }}>
+                <Text style={styles.diaMeta}>
+                  El día del grupo lo elige el coach. <Text style={{ color: Colors.accent }}>¿Querés hacer otro? Entrená por tu cuenta</Text>
+                </Text>
+              </TouchableOpacity>
             )}
           </CardDestacada>
           {pocoTiempo}
