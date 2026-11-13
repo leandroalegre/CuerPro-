@@ -19,7 +19,7 @@ import { Colors, Radius, Spacing, Typography } from '../../constants/theme';
 import { CambiarDiaEncuentro } from '../../components/CambiarDiaEncuentro';
 import { InstalarApp } from '../../components/InstalarApp';
 import { PrimerosPasos } from '../../components/PrimerosPasos';
-import { fraseDelDia } from '../../constants/frases';
+import { fraseAlAzar } from '../../constants/frases';
 import { fechaLinda, useEncuentro } from '../../hooks/useEncuentro';
 import { useSesion } from '../../hooks/useSesion';
 import { api, Confirmacion, diasParaVencer, PlanResumen, textoVence } from '../../lib/api';
@@ -30,6 +30,9 @@ export default function HoyScreen() {
   const [enviando, setEnviando] = useState(false);
   const [nota, setNota] = useState('');
   const [agenda, setAgenda] = useState<'mover' | 'agregar' | null>(null);
+  // Cada vez que volvés a Hoy, otra frase
+  const [frase, setFrase] = useState(fraseAlAzar);
+  useFocusEffect(useCallback(() => { setFrase(fraseAlAzar()); }, []));
   const notaGuardada = encuentro?.confirmaciones.find(c => c.usuario_id === usuario?.id)?.nota ?? '';
   useEffect(() => setNota(notaGuardada), [encuentro?.id, notaGuardada]);
   // Músculos que hace rato no entrenás (los días los elige el coach en Grupos)
@@ -90,7 +93,7 @@ export default function HoyScreen() {
     return (
       <ScrollView style={pantalla.scroll} contentContainerStyle={pantalla.contenido}>
         <Etiqueta>Individual</Etiqueta>
-        <Text style={styles.frase}>{`“${fraseDelDia()}”`}</Text>
+        <Text style={styles.frase}>{`“${frase}”`}</Text>
         <InstalarApp />
         <PrimerosPasos />
         {avisosArriba}
@@ -171,7 +174,7 @@ export default function HoyScreen() {
       refreshControl={<RefreshControl refreshing={cargando} onRefresh={recargar} tintColor={Colors.accent} />}
     >
       <Etiqueta>{grupo.nombre}</Etiqueta>
-      <Text style={styles.frase}>{`“${fraseDelDia()}”`}</Text>
+      <Text style={styles.frase}>{`“${frase}”`}</Text>
       <InstalarApp />
       <PrimerosPasos />
       {avisosArriba}
