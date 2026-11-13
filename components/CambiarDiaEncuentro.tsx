@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Text } from './Letra';
 import { Colors, Radius, Spacing, Typography } from '../constants/theme';
@@ -8,18 +8,25 @@ import { api, Plan } from '../lib/api';
 // El coach elige qué día del plan se entrena en este encuentro (vale para todo el grupo).
 // Sirve si el grupo fue un día sin anotarlo y la app muestra lo mismo de la vez anterior.
 // Los entrenamientos siguientes siguen el orden del plan desde el elegido.
-export function CambiarDiaEncuentro({ encuentroId, diaId, onCambio }: { encuentroId: number; diaId: number | null; onCambio: () => void }) {
+// directo: muestra los días a la vista (como en el Individual), sin el link "Cambiar…".
+export function CambiarDiaEncuentro({ encuentroId, diaId, onCambio, directo }: { encuentroId: number; diaId: number | null; onCambio: () => void; directo?: boolean }) {
   const { token, grupo } = useSesion();
   const [dias, setDias] = useState<{ id: number; nombre: string }[] | null>(null);
-  const [abierto, setAbierto] = useState(false);
+  const [abiertoLink, setAbierto] = useState(false);
+  const abierto = directo || abiertoLink;
 
-  const abrir = async () => {
-    setAbierto(!abierto);
+  const cargar = async () => {
     if (dias || !grupo) return;
     try {
       const d = await api<{ plan: Plan | null }>('plan', { grupo_id: grupo.id }, token);
       setDias(d.plan?.dias.map(x => ({ id: x.id, nombre: x.nombre })) ?? []);
     } catch {}
+  };
+  useEffect(() => { if (directo) cargar(); }, [directo, grupo?.id]);
+
+  const abrir = () => {
+    setAbierto(!abiertoLink);
+    cargar();
   };
 
   const elegir = async (id: number) => {
@@ -35,12 +42,16 @@ export function CambiarDiaEncuentro({ encuentroId, diaId, onCambio }: { encuentr
 
   return (
     <View style={{ marginTop: Spacing.sm }}>
-      <TouchableOpacity onPress={abrir}>
-        <Text style={styles.link}>{abierto ? 'Cerrar' : 'Cambiar qué día del plan se hace'}</Text>
-      </TouchableOpacity>
+      {directo ? (
+        <Text style={styles.nota}>¿Qué día del plan hacen? Cambia para todo el grupo y los próximos siguen el orden desde el que elijas.</Text>
+      ) : (
+        <TouchableOpacity onPress={abrir}>
+          <Text style={styles.link}>{abierto ? 'Cerrar' : 'Cambiar qué día del plan se hace'}</Text>
+        </TouchableOpacity>
+      )}
       {abierto && (
         <>
-          <Text style={styles.nota}>Cambia para todo el grupo. Los próximos siguen el orden del plan desde el que elijas.</Text>
+          {!directo && <Text style={styles.nota}>Cambia para todo el grupo. Los próximos siguen el orden del plan desde el que elijas.</Text>}
           <View style={styles.chips}>
             {(dias ?? []).map(d => (
               <TouchableOpacity key={d.id} style={[styles.chip, d.id === diaId && styles.chipActivo]} onPress={() => elegir(d.id)}>

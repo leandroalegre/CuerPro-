@@ -218,7 +218,14 @@ export default function EntrenarScreen() {
             </Text>
             <AvisoRecuperacion lista={recuperacion.deEjercicios(armar(encuentro.rutina).rutina)} />
             {grupo?.rol === 'coach' && encuentro.dia && !corto && (
-              <CambiarDiaEncuentro encuentroId={encuentro.id} diaId={encuentro.dia.id} onCambio={recargar} />
+              <CambiarDiaEncuentro directo encuentroId={encuentro.id} diaId={encuentro.dia.id} onCambio={recargar} />
+            )}
+            {grupo?.rol !== 'coach' && !corto && (
+              <TouchableOpacity onPress={() => setSolo(true)} style={{ marginTop: Spacing.sm }}>
+                <Text style={styles.diaMeta}>
+                  El día del grupo lo elige el coach. <Text style={{ color: Colors.accent }}>¿Querés hacer otro? Entrená por tu cuenta</Text>
+                </Text>
+              </TouchableOpacity>
             )}
           </CardDestacada>
           {pocoTiempo}
@@ -388,6 +395,8 @@ function ListaRutina({
 }) {
   const { token } = useSesion();
   const [orden, setOrden] = useState<number[]>([]);
+  // "Terminar día": cada toque sube el número y las tarjetas sin terminar quedan salteadas
+  const [cerrar, setCerrar] = useState(0);
 
   // Ejercicios que agregaste hoy (no estaban en el plan) y los que cambiaste por otro del
   // catálogo porque la máquina no se desocupaba. Son solo para vos y para este entrenamiento.
@@ -470,6 +479,7 @@ function ListaRutina({
             drag={drag}
             activo={isActive}
             siguiente={item.union_siguiente ? datos[(getIndex() ?? 0) + 1]?.nombre : undefined}
+            cerrar={cerrar}
           />
         </ScaleDecorator>
       )}
@@ -478,6 +488,10 @@ function ListaRutina({
       <Ionicons name="add-circle-outline" size={20} color={Colors.accent} />
       <Text style={styles.agregarTexto}>Agregar un ejercicio</Text>
     </TouchableOpacity>
+    <Boton titulo="Terminar día" onPress={() => setCerrar(cerrar + 1)} style={{ marginTop: Spacing.sm }} />
+    {cerrar > 0 && (
+      <Texto muted>Listo, terminaste el día. Lo que faltaba quedó salteado; con "Deshacer" lo retomás.</Texto>
+    )}
     <SelectorEjercicio
       visible={!!eligiendo}
       titulo={eligiendo?.para === 'nuevo' ? 'Agregar un ejercicio' : 'Cambiar por otro ejercicio'}
@@ -504,6 +518,7 @@ function EjercicioCard({
   drag,
   activo,
   siguiente,
+  cerrar,
 }: {
   ej: EjercicioRutina;
   encuentroId: number | null; // null: por mi cuenta
@@ -518,6 +533,7 @@ function EjercicioCard({
   drag: () => void;
   activo: boolean;
   siguiente?: string; // si va en superserie o circuito con el que sigue
+  cerrar: number; // sube con "Terminar día": si falta algo, queda salteado
 }) {
   const { token } = useSesion();
   const [verAlternativas, setVerAlternativas] = useState(false);
@@ -633,6 +649,10 @@ function EjercicioCard({
   };
 
   const terminado = porTiempo ? hechas.length > 0 : hechas.length >= ej.series;
+  useEffect(() => {
+    if (!cerrar || terminado) return;
+    setSaltado(true); setFinDescanso(null); setVerAlternativas(false);
+  }, [cerrar]);
 
   if (saltado) {
     return (
